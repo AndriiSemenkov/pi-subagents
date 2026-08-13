@@ -139,6 +139,7 @@ import {
 	type Details,
 	type ExtensionConfig,
 	type ForegroundRunControl,
+	type IntercomBridgeConfig,
 	type IntercomEventBus,
 	type JsonSchemaObject,
 	type MaxOutputConfig,
@@ -300,6 +301,8 @@ export interface SubagentParamsLike {
 	concurrency?: number;
 	worktree?: boolean;
 	context?: "fresh" | "fork";
+	/** Per-run intercom bridge config. It replaces the global config for this launch only. */
+	intercomBridge?: IntercomBridgeConfig;
 	async?: boolean;
 	foregroundOnly?: boolean;
 	timeoutMs?: number;
@@ -1511,15 +1514,16 @@ async function resumeAsyncRun(input: {
 	const discoveredAgents = discovered.agents;
 	const modelScope = discovered.modelScope;
 	const sessionName = resolveIntercomSessionTarget(input.deps.pi.getSessionName(), input.ctx.sessionManager.getSessionId());
+	const recoveryDescriptor = "recoveryDescriptor" in target ? target.recoveryDescriptor : undefined;
 	const intercomBridge = resolveIntercomBridge({
 		config: input.deps.config.intercomBridge,
+		override: input.params.intercomBridge ?? recoveryDescriptor?.intercomBridge,
 		context: input.params.context,
 		orchestratorTarget: sessionName,
 	});
 	const agents = intercomBridge.active
 		? discoveredAgents.map((agent) => applyIntercomBridgeToAgent(agent, intercomBridge))
 		: discoveredAgents;
-	const recoveryDescriptor = "recoveryDescriptor" in target ? target.recoveryDescriptor : undefined;
 	const discoveredAgentConfig = agents.find((agent) => agent.name === target.agent);
 	const agentConfig: AgentConfig | undefined = discoveredAgentConfig ?? (recoveryDescriptor ? {
 		name: recoveryDescriptor.agent,
@@ -1717,6 +1721,7 @@ async function resumeAsyncRun(input: {
 		worktreeSetupHookTimeoutMs: input.deps.config.worktreeSetupHookTimeoutMs,
 		worktreeBaseDir: input.deps.config.worktreeBaseDir,
 		controlConfig: recoveryDescriptor?.controlConfig ?? resolveControlConfig(input.deps.config.control, input.params.control),
+		intercomBridge: input.params.intercomBridge ?? recoveryDescriptor?.intercomBridge,
 		controlIntercomTarget: intercomBridge.active ? intercomBridge.orchestratorTarget : undefined,
 		childIntercomTarget: intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(runId, agent, index) : undefined,
 		availableModels,
@@ -2894,6 +2899,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
 			worktreeBaseDir: deps.config.worktreeBaseDir,
 			controlConfig,
+			intercomBridge: params.intercomBridge,
 			controlIntercomTarget,
 			childIntercomTarget: childIntercomTarget ? (agent, index) => childIntercomTarget(agent, index) : undefined,
 			nestedRoute,
@@ -4215,6 +4221,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 					worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
 					worktreeBaseDir: deps.config.worktreeBaseDir,
 					controlConfig,
+					intercomBridge: params.intercomBridge,
 					controlIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
 					childIntercomTarget: data.intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(id, agent, index) : undefined,
 					nestedRoute: data.nestedRoute,
@@ -4587,6 +4594,7 @@ export function prepareWorkflowLaunchParams(
 		const timeoutMs = childParams.timeoutMs ?? childParams.maxRuntimeMs ?? workflowDefaults.timeoutMs ?? workflowDefaults.maxRuntimeMs;
 		const turnBudget = childParams.turnBudget ?? workflowDefaults.turnBudget;
 		const toolBudget = childParams.toolBudget ?? workflowDefaults.toolBudget;
+		const intercomBridge = childParams.intercomBridge ?? workflowDefaults.intercomBridge;
 		return {
 			action: "resume",
 			id: childParams.resume.trim(),
@@ -4598,6 +4606,7 @@ export function prepareWorkflowLaunchParams(
 			...(timeoutMs !== undefined ? { timeoutMs: timeoutMs as number } : {}),
 			...(turnBudget !== undefined ? { turnBudget: turnBudget as TurnBudgetConfig } : {}),
 			...(toolBudget !== undefined ? { toolBudget: toolBudget as ToolBudgetConfig } : {}),
+			...(intercomBridge !== undefined ? { intercomBridge: intercomBridge as IntercomBridgeConfig } : {}),
 		};
 	}
 	const launchParams = {
@@ -5949,6 +5958,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const sessionName = resolveIntercomSessionTarget(deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
 		const intercomBridge = resolveIntercomBridge({
 			config: deps.config.intercomBridge,
+			override: effectiveParams.intercomBridge,
 			context: effectiveParams.context ?? (contextPolicy.usesFork ? "fork" : undefined),
 			orchestratorTarget: sessionName,
 		});

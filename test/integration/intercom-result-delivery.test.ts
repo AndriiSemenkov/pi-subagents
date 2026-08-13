@@ -286,6 +286,30 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.doesNotMatch(result.content[0]?.text ?? "", /Delivered single subagent result via intercom\./);
 	});
 
+	it("keeps a workflow child bridge override isolated and preserves final output", async () => {
+		mockPi.onCall({ matchArgIncludes: "isolated task", output: "Isolated child output" });
+		mockPi.onCall({ matchArgIncludes: "normal task", output: "Normal child output" });
+		const { executor, events } = makeExecutor({ resultDelivery: true, agents: [makeAgent("worker", { tools: ["read"] })] });
+
+		const result = await executor.execute(
+			"workflow-intercom-override",
+			{
+				workflowScript: `const isolated = await runs.run("isolated", { agent: "worker", task: "isolated task", intercomBridge: { mode: "off" } }); const normal = await runs.run("normal", { agent: "worker", task: "normal task" }); return { isolated: isolated.output, normal: normal.output };`,
+				async: false,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		const isolatedArgs = await readMockCallArgs(0);
+		const normalArgs = await readMockCallArgs(1);
+		assert.equal(isolatedArgs[isolatedArgs.indexOf("--tools") + 1], "read");
+		assert.equal(normalArgs[normalArgs.indexOf("--tools") + 1], "read,intercom,contact_supervisor");
+		assert.equal(events.emitted.filter((entry) => entry.channel === "subagent:result-intercom").length, 1);
+		assert.deepEqual(result.details?.workflow?.value, { isolated: "Isolated child output", normal: "Normal child output" });
+	});
+
 	it("waits for retained workflow resume loops and returns each completed revived child", async () => {
 		mockPi.onCall({ output: "Completed retained follow-up one" });
 		mockPi.onCall({ output: "Completed retained follow-up two" });

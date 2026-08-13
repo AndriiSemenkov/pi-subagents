@@ -38,6 +38,7 @@ import {
 	type AsyncStatus,
 	type ArtifactConfig,
 	type Details,
+	type IntercomBridgeConfig,
 	type JsonSchemaObject,
 	type MaxOutputConfig,
 	type NestedRouteInfo,
@@ -215,6 +216,7 @@ interface AsyncSingleParams {
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
 	controlConfig?: ResolvedControlConfig;
+	intercomBridge?: IntercomBridgeConfig;
 	controlIntercomTarget?: string;
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
 	nestedRoute?: NestedRouteInfo;
@@ -1463,6 +1465,7 @@ export function executeAsyncSingle(
 		...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
 		...(params.acceptance !== undefined ? { acceptance: params.acceptance } : {}),
 		...(controlConfig ? { controlConfig } : {}),
+		...(params.intercomBridge !== undefined ? { intercomBridge: params.intercomBridge } : {}),
 		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
 		...(initialTurnBudget ? { initialTurnBudget: { maxTurns: initialTurnBudget.maxTurns, graceTurns: initialTurnBudget.graceTurns } } : {}),
 		...(resolvedToolBudget.budget ? { initialToolBudget: resolvedToolBudget.budget } : {}),

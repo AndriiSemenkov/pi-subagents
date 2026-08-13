@@ -390,6 +390,8 @@ interface ExecutionContextData {
 	signal: AbortSignal;
 	onUpdate?: (r: AgentToolResult<Details>) => void;
 	agents: AgentConfig[];
+	/** Discovered agent definitions before per-run bridge injection. */
+	recoveryAgents: AgentConfig[];
 	runId: string;
 	shareEnabled: boolean;
 	sessionRoot: string;
@@ -1524,8 +1526,8 @@ async function resumeAsyncRun(input: {
 	const agents = intercomBridge.active
 		? discoveredAgents.map((agent) => applyIntercomBridgeToAgent(agent, intercomBridge))
 		: discoveredAgents;
-	const discoveredAgentConfig = agents.find((agent) => agent.name === target.agent);
-	const agentConfig: AgentConfig | undefined = discoveredAgentConfig ?? (recoveryDescriptor ? {
+	const discoveredAgentConfig = discoveredAgents.find((agent) => agent.name === target.agent);
+	const baseAgentConfig: AgentConfig | undefined = discoveredAgentConfig ?? (recoveryDescriptor ? {
 		name: recoveryDescriptor.agent,
 		description: "Persisted async recovery contract",
 		systemPrompt: "",
@@ -1535,7 +1537,7 @@ async function resumeAsyncRun(input: {
 		source: "project",
 		filePath: recoveryDescriptor.agentFilePath ?? path.join(getProjectSubagentsDir(recoveryDescriptor.cwd), "recovery-agent"),
 	} : undefined);
-	if (!agentConfig) {
+	if (!baseAgentConfig) {
 		return {
 			content: [{ type: "text", text: `Unknown agent for resume: ${target.agent}` }],
 			isError: true,
@@ -1676,7 +1678,8 @@ async function resumeAsyncRun(input: {
 		if (error instanceof ActiveAsyncCapacityError) return { content: [{ type: "text", text: error.message }], isError: true, details: { mode: "single", results: [], activeAsyncCapacity: error.snapshot } };
 		return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "single", results: [] } };
 	}
-	const recoveryAgentConfig = recoveryDescriptor ? applySteeringRecoveryAgentConfig(agentConfig, recoveryDescriptor) : agentConfig;
+	const recoveryAgentConfig = recoveryDescriptor ? applySteeringRecoveryAgentConfig(baseAgentConfig, recoveryDescriptor) : baseAgentConfig;
+	const agentConfig = intercomBridge.active ? applyIntercomBridgeToAgent(recoveryAgentConfig, intercomBridge) : recoveryAgentConfig;
 	const artifactConfig: ArtifactConfig = recoveryDescriptor?.artifactConfig ?? omitUndefinedProperties({ ...DEFAULT_ARTIFACT_CONFIG, enabled: input.params.artifacts !== false, dir: input.deps.config.artifactDir ?? DEFAULT_ARTIFACT_CONFIG.dir });
 	const artifactsDir = recoveryDescriptor?.artifactsDir ?? getArtifactsDir(parentSessionFile, effectiveCwd, artifactConfig.dir);
 	const availableModels = input.ctx.modelRegistry.getAvailable().map(toModelInfo);
@@ -1686,7 +1689,8 @@ async function resumeAsyncRun(input: {
 		agent: target.agent,
 		task: buildRevivedAsyncTask(target as Parameters<typeof buildRevivedAsyncTask>[0], effectiveFollowUp),
 		goal: effectiveFollowUp,
-		agentConfig: recoveryAgentConfig,
+		agentConfig,
+		recoveryAgentConfig,
 		ctx: compactOptional<Parameters<typeof executeAsyncSingle>[1]["ctx"]>({
 			pi: input.deps.pi,
 			cwd: input.requestCwd,
@@ -2875,6 +2879,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			task: shouldForkAgent(contextPolicy, params.agent!) ? wrapForkTask(params.task ?? "") : (params.task ?? ""),
 			goal: params.task ?? "",
 			agentConfig: a,
+			recoveryAgentConfig: data.recoveryAgents.find((agent) => agent.name === params.agent),
 			ctx: asyncCtx,
 			availableModels,
 			cwd: effectiveCwd,
@@ -4197,6 +4202,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 					task: shouldForkAgent(contextPolicy, params.agent!) ? wrapForkTask(task) : task,
 					goal: task,
 					agentConfig,
+					recoveryAgentConfig: data.recoveryAgents.find((agent) => agent.name === params.agent),
 					ctx: asyncCtx,
 					availableModels,
 					cwd: effectiveCwd,
@@ -6221,6 +6227,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			signal,
 			onUpdate: onUpdateWithContext,
 			agents,
+			recoveryAgents: discoveredAgents,
 			runId,
 			shareEnabled,
 			sessionRoot,

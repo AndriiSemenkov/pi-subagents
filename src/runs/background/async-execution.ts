@@ -189,6 +189,8 @@ interface AsyncSingleParams {
 	/** Raw caller-facing goal used only by the started event. */
 	goal?: string;
 	agentConfig: AgentConfig;
+	/** Agent contract before per-run bridge injection, used only for recovery persistence. */
+	recoveryAgentConfig?: AgentConfig;
 	ctx: AsyncExecutionContext;
 	cwd?: string;
 	maxOutput?: MaxOutputConfig;
@@ -1434,6 +1436,7 @@ export function executeAsyncSingle(
 		async: true,
 		agentContract: params.agentContract,
 	});
+	const recoveryAgentConfig = params.recoveryAgentConfig ?? agentConfig;
 	const recoveryDescriptor: SteeringRecoveryDescriptor = {
 		version: 1,
 		launchContractDigest,
@@ -1445,21 +1448,21 @@ export function executeAsyncSingle(
 		...(sessionFile ? { sessionFile } : {}),
 		cwd: runnerCwd,
 		...(model ? { model } : {}),
-		...(agentConfig.fallbackModels ? { fallbackModels: [...agentConfig.fallbackModels] } : {}),
+		...(recoveryAgentConfig.fallbackModels ? { fallbackModels: [...recoveryAgentConfig.fallbackModels] } : {}),
 		...(effectiveThinking ? { thinking: resolveEffectiveThinking(model, effectiveThinking) } : {}),
-		...(agentConfig.tools ? { tools: [...agentConfig.tools] } : {}),
-		...(agentConfig.extensions ? { extensions: [...agentConfig.extensions] } : {}),
-		...(agentConfig.subagentOnlyExtensions ? { subagentOnlyExtensions: [...agentConfig.subagentOnlyExtensions] } : {}),
-		...(agentConfig.mcpDirectTools ? { mcpDirectTools: [...agentConfig.mcpDirectTools] } : {}),
-		...(agentConfig.systemPrompt ? { systemPrompt: agentConfig.systemPrompt } : {}),
-		systemPromptMode: agentConfig.systemPromptMode,
-		inheritProjectContext: agentConfig.inheritProjectContext,
-		inheritSkills: agentConfig.inheritSkills,
+		...(recoveryAgentConfig.tools ? { tools: [...recoveryAgentConfig.tools] } : {}),
+		...(recoveryAgentConfig.extensions ? { extensions: [...recoveryAgentConfig.extensions] } : {}),
+		...(recoveryAgentConfig.subagentOnlyExtensions ? { subagentOnlyExtensions: [...recoveryAgentConfig.subagentOnlyExtensions] } : {}),
+		...(recoveryAgentConfig.mcpDirectTools ? { mcpDirectTools: [...recoveryAgentConfig.mcpDirectTools] } : {}),
+		...(recoveryAgentConfig.systemPrompt ? { systemPrompt: recoveryAgentConfig.systemPrompt } : {}),
+		systemPromptMode: recoveryAgentConfig.systemPromptMode,
+		inheritProjectContext: recoveryAgentConfig.inheritProjectContext,
+		inheritSkills: recoveryAgentConfig.inheritSkills,
 		...(resolvedSkills.length ? { skills: resolvedSkills.map((skill) => skill.name) } : {}),
-		...(agentConfig.skillPath ? { skillPath: [...agentConfig.skillPath] } : {}),
-		...(agentConfig.filePath ? { agentFilePath: agentConfig.filePath } : {}),
-		...(agentConfig.completionGuard !== undefined ? { completionGuard: agentConfig.completionGuard } : {}),
-		...(agentConfig.memory ? { memory: { ...agentConfig.memory } } : {}),
+		...(recoveryAgentConfig.skillPath ? { skillPath: [...recoveryAgentConfig.skillPath] } : {}),
+		...(recoveryAgentConfig.filePath ? { agentFilePath: recoveryAgentConfig.filePath } : {}),
+		...(recoveryAgentConfig.completionGuard !== undefined ? { completionGuard: recoveryAgentConfig.completionGuard } : {}),
+		...(recoveryAgentConfig.memory ? { memory: { ...recoveryAgentConfig.memory } } : {}),
 		...(outputPath ? { outputPath } : {}),
 		outputMode,
 		...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
@@ -1469,7 +1472,7 @@ export function executeAsyncSingle(
 		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
 		...(initialTurnBudget ? { initialTurnBudget: { maxTurns: initialTurnBudget.maxTurns, graceTurns: initialTurnBudget.graceTurns } } : {}),
 		...(resolvedToolBudget.budget ? { initialToolBudget: resolvedToolBudget.budget } : {}),
-		maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
+		maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, recoveryAgentConfig.maxSubagentDepth),
 		...(maxOutput ? { maxOutput } : {}),
 		share: shareEnabled,
 		...(resolvedSessionDir ? { sessionDir: resolvedSessionDir } : {}),

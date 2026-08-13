@@ -983,7 +983,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		}
 	});
 
-	it("revives from the persisted contract when the agent definition was removed", async () => {
+	it("revives a removed agent with its persisted bridge override", async () => {
 		mockPi.onCall({ output: "descriptor-backed answer" });
 		const runId = `resume-descriptor-${Date.now()}`;
 		const asyncDir = path.join(ASYNC_DIR, runId);
@@ -1000,6 +1000,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				model: "anthropic/claude-sonnet-4:high",
 				tools: ["read"],
 				systemPrompt: "Original persisted prompt",
+				intercomBridge: { mode: "off" },
 				maxSubagentDepth: 1,
 			});
 			const { executor } = makeExecutor({ agents: [] });

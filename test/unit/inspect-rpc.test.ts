@@ -1,0 +1,290 @@
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { describe, it } from "node:test";
+import {
+	encodeInspectReply,
+	handleInspectRpcArgs,
+	INSPECT_REPLY_KIND,
+	INSPECT_REPLY_VERSION,
+	INSPECT_WIDGET_PREFIX,
+	MAX_SERIALIZED_BYTES,
+	buildInspectReply,
+	parseInspectRequest,
+	type InspectDeps,
+} from "../../src/runs/background/inspect-rpc.ts";
+import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
+import type { SubagentState } from "../../src/shared/types.ts";
+
+const SESSION_ID = "session-current";
+const privateNeedle = "PRIVATE_LEAK_NEEDLE";
+
+function makeState(root: string, sessionId: string | null = SESSION_ID): SubagentState {
+	return {
+		currentSessionId: sessionId,
+		foregroundControls: new Map(),
+		foregroundRuns: new Map(),
+		asyncJobs: new Map(),
+		trustedSessionRoots: [root],
+	} as unknown as SubagentState;
+}
+
+interface FixtureOptions {
+	runId: string;
+	sessionId?: string;
+	state?: string;
+	mode?: string;
+	context?: string;
+	steps?: Array<Record<string, unknown>>;
+	sessionMessages?: Array<Record<string, unknown>>;
+	resultPayload?: Record<string, unknown>;
+}
+
+function makeRun(root: string, options: FixtureOptions): { asyncDir: string; resultsDir: string; sessionFile: string } {
+	const asyncRoot = path.join(root, "runs");
+	const resultsDir = path.join(root, "results");
+	const asyncDir = path.join(asyncRoot, options.runId);
+	fs.mkdirSync(asyncDir, { recursive: true });
+	fs.mkdirSync(resultsDir, { recursive: true });
+	const sessionFile = path.join(root, `${options.runId}-session.jsonl`);
+	const records = (options.sessionMessages ?? []).map((message) => JSON.stringify({ message }));
+	fs.writeFileSync(sessionFile, records.length > 0 ? `${records.join("\n")}\n` : "", "utf-8");
+	const steps = (options.steps ?? [{ agent: "worker", status: options.state ?? "complete", startedAt: 100, endedAt: 150, sessionFile }])
+		.map((step) => ({ ...step }));
+	fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+		runId: options.runId,
+		sessionId: options.sessionId ?? SESSION_ID,
+		mode: options.mode ?? "single",
+		state: options.state ?? "complete",
+		...(options.context ? { context: options.context } : {}),
+		startedAt: 100,
+		endedAt: 200,
+		lastUpdate: 200,
+		sessionFile,
+		steps,
+	}, null, 2), "utf-8");
+	if (options.resultPayload) {
+		writeAsyncResultFile(path.join(resultsDir, `${options.runId}.json`), {
+			runId: options.runId,
+			sessionId: options.sessionId ?? SESSION_ID,
+			...options.resultPayload,
+		});
+	}
+	return { asyncDir, resultsDir, sessionFile };
+}
+
+function makeDeps(root: string, resultsDir: string, state?: SubagentState): InspectDeps {
+	return {
+		state: state ?? makeState(root),
+		asyncDirRoot: path.join(root, "runs"),
+		resultsDir,
+		kill: () => true,
+		now: () => 1_000,
+	};
+}
+
+const userMessage = (text: string) => ({ role: "user", content: text });
+const assistantMessage = (text: string) => ({ role: "assistant", content: [{ type: "text", text }] });
+const toolCallMessage = (name: string, args: unknown) => ({ role: "assistant", content: [{ type: "toolCall", name, args }] });
+
+describe("inspect-rpc request parsing", () => {
+	it("parses positional args and --lines", () => {
+		const parsed = parseInspectRequest("req-1 run-1 child-2 --lines 25");
+		assert.deepEqual(parsed.request, { requestId: "req-1", asyncId: "run-1", childId: "child-2", lines: 25 });
+	});
+	it("rejects bad requestId charset, unknown flags, extra positionals", () => {
+		assert.match(parseInspectRequest("bad!id run-1").error ?? "", /requestId/);
+		assert.match(parseInspectRequest("req-1 run-1 --bogus").error ?? "", /Unknown flag/);
+		assert.match(parseInspectRequest("req-1 run-1 a b").error ?? "", /Too many positional/);
+		assert.match(parseInspectRequest("req-1 run-1 --lines nope").error ?? "", /--lines/);
+		assert.match(parseInspectRequest("req-1").error ?? "", /Usage/);
+	});
+});
+
+describe("inspect-rpc resolution and ownership", () => {
+	it("returns not_found for an unknown run", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-missing-"));
+		const reply = buildInspectReply({ requestId: "r1", asyncId: "nope" }, makeDeps(root, path.join(root, "results")));
+		assert.equal(reply.error?.code, "not_found");
+		assert.equal(reply.requestId, "r1");
+	});
+	it("returns foreign_session and no data for runs owned by another session", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-foreign-"));
+		const { resultsDir } = makeRun(root, { runId: "run-foreign", sessionId: "session-other" });
+		const reply = buildInspectReply({ requestId: "r2", asyncId: "run-foreign" }, makeDeps(root, resultsDir));
+		assert.equal(reply.error?.code, "foreign_session");
+		assert.equal(reply.messages, undefined);
+		assert.equal(reply.task, undefined);
+		assert.equal(reply.finalOutput, undefined);
+	});
+	it("returns no_active_session when the request cannot be attributed", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-nosession-"));
+		const { resultsDir } = makeRun(root, { runId: "run-x" });
+		const reply = buildInspectReply({ requestId: "r3", asyncId: "run-x" }, makeDeps(root, resultsDir, makeState(root, null)));
+		assert.equal(reply.error?.code, "no_active_session");
+	});
+	it("returns stale when artifacts are gone", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-stale-"));
+		const asyncRoot = path.join(root, "runs");
+		fs.mkdirSync(path.join(asyncRoot, "run-stale"), { recursive: true });
+		const reply = buildInspectReply({ requestId: "r4", asyncId: "run-stale" }, makeDeps(root, path.join(root, "results")));
+		assert.equal(reply.error?.code, "stale");
+	});
+});
+
+describe("inspect-rpc reply content", () => {
+	it("returns task, messages, and final output without leaking paths", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-full-"));
+		const sessionFile = path.join(root, "run-1-session.jsonl");
+		const { resultsDir } = makeRun(root, {
+			runId: "run-1",
+			sessionMessages: [
+				userMessage("Summarize the repo"),
+				toolCallMessage("bash", { command: "ls" }),
+				assistantMessage("Done."),
+			],
+			resultPayload: { summary: "Run summary", results: [{ agent: "worker", output: "final answer", success: true }] },
+		});
+		const reply = buildInspectReply({ requestId: "r5", asyncId: "run-1" }, makeDeps(root, resultsDir));
+		assert.equal(reply.error, undefined);
+		assert.equal(reply.kind, INSPECT_REPLY_KIND);
+		assert.equal(reply.version, INSPECT_REPLY_VERSION);
+		assert.equal(reply.status, "complete");
+		assert.equal(reply.task, "Summarize the repo");
+		assert.equal(reply.finalOutput, "Run summary");
+		assert.equal(reply.messages?.length, 3);
+		assert.equal(reply.messages?.[1]?.kind, "toolCall");
+		assert.equal(reply.messages?.[1]?.name, "bash");
+		const serialized = JSON.stringify(reply);
+		assert.equal(serialized.includes(sessionFile), false);
+		assert.equal(serialized.includes(root), false);
+	});
+	it("resolves a direct step child by snapshot node id", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-child-"));
+		const childSession = path.join(root, "child.jsonl");
+		fs.writeFileSync(childSession, `${JSON.stringify({ message: userMessage("child task") })}\n`, "utf-8");
+		const { resultsDir } = makeRun(root, {
+			runId: "run-parent",
+			mode: "workflow",
+			steps: [
+				{ agent: "planner", label: "plan", status: "complete", workflowKey: "step-a", startedAt: 100, endedAt: 150, sessionFile: childSession },
+			],
+			resultPayload: { summary: "parent", results: [{ agent: "planner", output: "child output", success: true }] },
+		});
+		const reply = buildInspectReply({ requestId: "r6", asyncId: "run-parent", childId: "step-a" }, makeDeps(root, resultsDir));
+		assert.equal(reply.error, undefined);
+		assert.equal(reply.childId, "step-a");
+		assert.equal(reply.label, "plan");
+		assert.equal(reply.task, "child task");
+		assert.equal(reply.finalOutput, "child output");
+	});
+	it("returns not_found for an unknown childId", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-nochild-"));
+		const { resultsDir } = makeRun(root, { runId: "run-p2" });
+		const reply = buildInspectReply({ requestId: "r7", asyncId: "run-p2", childId: "step:9" }, makeDeps(root, resultsDir));
+		assert.equal(reply.error?.code, "not_found");
+	});
+	it("omits task for fork-context children", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-fork-"));
+		const { resultsDir } = makeRun(root, {
+			runId: "run-fork",
+			context: "fork",
+			sessionMessages: [userMessage("inherited parent text"), assistantMessage("answer")],
+		});
+		const reply = buildInspectReply({ requestId: "r8", asyncId: "run-fork" }, makeDeps(root, resultsDir));
+		assert.equal(reply.error, undefined);
+		assert.equal(reply.task, undefined);
+		assert.equal(reply.messages?.length, 2);
+	});
+	it("reports running state with messages so far and no final output", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-running-"));
+		const { resultsDir } = makeRun(root, {
+			runId: "run-live",
+			state: "running",
+			sessionMessages: [userMessage("do work"), assistantMessage("working on it")],
+		});
+		const reply = buildInspectReply({ requestId: "r9", asyncId: "run-live" }, makeDeps(root, resultsDir));
+		assert.equal(reply.error, undefined);
+		assert.equal(reply.status, "running");
+		assert.equal(reply.messages?.length, 2);
+		assert.equal(reply.finalOutput, undefined);
+	});
+});
+
+describe("inspect-rpc bounds", () => {
+	it("keeps the serialized reply under the global byte budget", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-budget-"));
+		const big = "x".repeat(1_000);
+		const { resultsDir } = makeRun(root, {
+			runId: "run-big",
+			sessionMessages: Array.from({ length: 300 }, (_, index) => assistantMessage(`${index}:${big}`)),
+			resultPayload: { summary: big.repeat(9), results: [] },
+		});
+		const reply = buildInspectReply({ requestId: "r10", asyncId: "run-big", lines: 200 }, makeDeps(root, resultsDir));
+		assert.equal(reply.error, undefined);
+		const bytes = Buffer.byteLength(JSON.stringify(reply), "utf-8");
+		assert.ok(bytes <= MAX_SERIALIZED_BYTES, `reply ${bytes} exceeds ${MAX_SERIALIZED_BYTES}`);
+		assert.ok((reply.truncated?.messages ?? 0) > 0);
+	});
+	it("caps per-field lengths", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-caps-"));
+		const { resultsDir } = makeRun(root, {
+			runId: "run-caps",
+			sessionMessages: [userMessage(`task ${"t".repeat(10_000)}`)],
+			resultPayload: { summary: `out ${"o".repeat(20_000)}`, results: [] },
+		});
+		const reply = buildInspectReply({ requestId: "r11", asyncId: "run-caps" }, makeDeps(root, resultsDir));
+		assert.ok(reply.task && reply.task.length <= 2_000 && reply.truncated?.task);
+		assert.ok(reply.finalOutput && reply.finalOutput.length <= 8_000 && reply.truncated?.finalOutput);
+	});
+	it("preserves newlines in long-form content", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-lines-"));
+		const { resultsDir } = makeRun(root, {
+			runId: "run-lines",
+			sessionMessages: [userMessage("line one\nline two")],
+			resultPayload: { summary: "first\nsecond", results: [] },
+		});
+		const reply = buildInspectReply({ requestId: "r12", asyncId: "run-lines" }, makeDeps(root, resultsDir));
+		assert.equal(reply.task, "line one\nline two");
+		assert.equal(reply.finalOutput, "first\nsecond");
+		// The wire line itself must stay single-line for prefix parsing.
+		assert.equal(encodeInspectReply(reply)[0]?.includes("\n"), false);
+	});
+});
+
+describe("inspect-rpc command surface", () => {
+	it("answers unparseable args with an invalid_request reply", () => {
+		const reply = handleInspectRpcArgs("not valid at all", { state: makeState(fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-args-"))) });
+		assert.equal(reply.error?.code, "invalid_request");
+		assert.equal(reply.requestId, "not");
+	});
+	it("encodes replies with the widget prefix", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-encode-"));
+		const { resultsDir } = makeRun(root, { runId: "run-e" });
+		const lines = encodeInspectReply(buildInspectReply({ requestId: "r13", asyncId: "run-e" }, makeDeps(root, resultsDir)));
+		assert.equal(lines.length, 1);
+		assert.ok(lines[0]!.startsWith(INSPECT_WIDGET_PREFIX));
+		const parsed = JSON.parse(lines[0]!.slice(INSPECT_WIDGET_PREFIX.length));
+		assert.equal(parsed.kind, INSPECT_REPLY_KIND);
+		assert.equal(parsed.requestId, "r13");
+	});
+});
+
+describe("inspect-rpc serialization cost", () => {
+	it("serializes a worst-case bounded payload quickly", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-perf-"));
+		const big = "y".repeat(1_000);
+		const { resultsDir } = makeRun(root, {
+			runId: "run-perf",
+			sessionMessages: Array.from({ length: 400 }, (_, index) => toolCallMessage("bash", `${index}:${big}`)),
+			resultPayload: { summary: big, results: [] },
+		});
+		const start = performance.now();
+		for (let index = 0; index < 20; index++) {
+			buildInspectReply({ requestId: "r14", asyncId: "run-perf", lines: 200 }, makeDeps(root, resultsDir));
+		}
+		const elapsed = (performance.now() - start) / 20;
+		assert.ok(elapsed < 50, `expected well under a frame per reply, got ${elapsed.toFixed(1)}ms`);
+	});
+});

@@ -99,6 +99,42 @@ Pi binds `Ctrl+B` to editor cursor-left by default. The extension shortcut takes
 
 If something feels misconfigured, run `/subagents-doctor` or ask: "Check whether subagents and intercom are set up correctly."
 
+## Host inspection protocol (RPC)
+
+RPC hosts receive live async status through the bounded `subagent-async` widget
+(`PI_SUBAGENT_ASYNC_JSON:` payload). For on-demand detail — a child's delegated
+task, transcript window, or final output — hosts can invoke the extension
+command:
+
+```text
+/subagents-inspect-rpc <requestId> <asyncId> [childId] [--lines N]
+```
+
+Extension commands execute inline over Pi RPC without a model turn. The reply
+arrives as a single emit-then-retract update on the dedicated `subagent-inspect`
+widget key: the first (and only) line is `PI_SUBAGENT_INSPECT_JSON:<JSON>` with a
+versioned `pi-subagents.inspect-reply` payload correlated by `requestId`. Hosts
+must not render this widget; they should buffer the payload by `requestId` and
+drop unmatched replies.
+
+Inspection properties:
+
+- Read-only and on demand: nothing is persisted, broadcast, or added to
+  notification details; every request re-reads canonical run artifacts after
+  the same reconciliation the status action performs.
+- Session-scoped: runs owned by another session fail with `foreign_session`;
+  unknown ids fail with `not_found`; cleaned-up artifacts fail with `stale`.
+- Bounded: per-field string caps, a message-count cap (`--lines`, max 200), and
+  a hard 64 KB serialized budget with explicit `truncated` markers.
+- No filesystem paths appear in the reply.
+- `task` is the child session's first user message and is only populated when
+  it is genuinely attributable (fresh-context child whose session file fits the
+  read window); forked children omit it.
+- `childId` is exactly the node id the host received in the status snapshot
+  (step `workflowKey`/`runId`/`step:<index>`, or a nested run id).
+
+In TUI mode the command only points at the interactive `/subagents` inspector.
+
 ## Async run artifacts
 
 Async runs write machine-readable lifecycle artifacts for observability and workflow gates:

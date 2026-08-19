@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Add `/subagents-inspect-rpc`, a host-facing bridge command that answers on-demand async child inspection requests with a correlated, bounded `PI_SUBAGENT_INSPECT_JSON:` widget payload (task, transcript window, final output), so RPC hosts can inspect children without a model turn while the live status feed stays small.
+
 ### Changed
 - Guide oracle plan and design advice through a short same-session consultation when a material tradeoff remains, while keeping the parent as final decision-maker (#1245).
 - Improve bundled role and parent prompts for source-first discovery in noisy codebases (#1247).

@@ -245,14 +245,18 @@ function readResultOutput(resultsDir: string, sessionId: string, runId: string, 
 	if (resultPath) return resultOutput(JSON.parse(fs.readFileSync(resultPath, "utf-8")) as unknown, stepIndex);
 	const replay = readCompletionReplay(resultsDir, runId, { sessionId });
 	const archive = replay ? readCompletionArchive(replay.archivePath) : undefined;
-	const artifact = stepIndex === undefined
-		? archive?.entries.find((entry) => entry.source === "output-artifact")
-		: archive?.entries.find((entry) => entry.resultIndex === stepIndex && entry.source === "output-artifact");
+	// Run-level inspection must not attribute a child's output to the run in a
+	// multi-child archive. Child entries always carry resultIndex; run-level
+	// entries never do. A single-child archive is the one exception: the run's
+	// output IS that child's output.
+	const childIndexes = new Set(archive?.entries.filter((entry) => entry.resultIndex !== undefined).map((entry) => entry.resultIndex));
+	const singleChild = childIndexes.size === 1;
+	const matches = (entry: { resultIndex?: number }): boolean =>
+		stepIndex !== undefined ? entry.resultIndex === stepIndex : entry.resultIndex === undefined || singleChild;
+	const artifact = archive?.entries.find((entry) => entry.source === "output-artifact" && matches(entry));
 	const artifactPath = artifact?.source === "output-artifact" ? artifact.path : undefined;
 	if (artifactPath) return readOutputArtifact(artifactPath);
-	const sessionEntry = stepIndex === undefined
-		? archive?.entries.find((entry) => entry.source === "session")
-		: archive?.entries.find((entry) => entry.resultIndex === stepIndex && entry.source === "session");
+	const sessionEntry = archive?.entries.find((entry) => entry.source === "session" && matches(entry));
 	const sessionPath = sessionEntry?.source === "session" ? sessionEntry.path : undefined;
 	if (sessionPath) return readSessionBackedOutput(sessionPath, trustedRoots);
 	const output = stepIndex === undefined ? archive?.entries.find((entry) => entry.source === "result-tail")?.text : undefined;

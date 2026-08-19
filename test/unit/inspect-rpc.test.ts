@@ -348,6 +348,32 @@ describe("inspect-rpc reply content", () => {
 		assert.equal(reply.finalOutput, "session-backed answer");
 		assert.equal(JSON.stringify(reply).includes(childSession), false);
 	});
+	it("omits finalOutput for run-level inspection of a multi-child replay instead of attributing a child output", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-toplevel-"));
+		const firstOutputPath = path.join(root, "first-output.txt");
+		const secondOutputPath = path.join(root, "second-output.txt");
+		fs.writeFileSync(firstOutputPath, "first output", "utf-8");
+		fs.writeFileSync(secondOutputPath, "second output", "utf-8");
+		const { resultsDir } = makeRun(root, {
+			runId: "run-replay-toplevel",
+			mode: "workflow",
+			steps: [
+				{ agent: "first", status: "complete", workflowKey: "first", startedAt: 100, endedAt: 150 },
+				{ agent: "second", status: "complete", workflowKey: "second", startedAt: 100, endedAt: 150 },
+			],
+		});
+		recordWaitCompletion(makeState(root), "run-replay-toplevel", {
+			runId: "run-replay-toplevel",
+			sessionId: SESSION_ID,
+			results: [
+				{ artifactPaths: { outputPath: firstOutputPath } },
+				{ artifactPaths: { outputPath: secondOutputPath } },
+			],
+		}, Date.now(), 60_000, { resultsDir, sessionId: SESSION_ID });
+		const reply = buildInspectReply({ requestId: "r-replay-toplevel", asyncId: "run-replay-toplevel" }, makeDeps(root, resultsDir));
+		assert.equal(reply.error, undefined);
+		assert.equal(reply.finalOutput, undefined);
+	});
 	it("reports an internal error when a durable replay archive is malformed", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-malformed-"));
 		const runId = "run-replay-malformed";

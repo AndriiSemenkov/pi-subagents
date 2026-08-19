@@ -275,11 +275,11 @@ function readResultOutput(resultsDir: string, sessionId: string, runId: string, 
 	// multi-child archive. Current child entries carry resultIndex and agent;
 	// run-level entries carry neither. Legacy archives (written before
 	// resultIndex existed) have child entries with agent but no resultIndex,
-	// so child reads fall back to a unique agent name and run-level reads require
-	// agent-less entries. Duplicate legacy agent names fail closed. A single-child
-	// archive is the one exception: the run's output IS that child's output.
-	const childIndexes = new Set(archive?.entries.filter((entry) => entry.resultIndex !== undefined).map((entry) => entry.resultIndex));
-	const singleChild = childIndexes.size === 1;
+	// so child reads fall back to a unique agent name. Duplicate legacy agent
+	// names fail closed. A single-child archive is the one exception: the run's
+	// output IS that child's output, including a legacy agent-tagged entry.
+	const childEntries = archive?.entries.filter((entry) => entry.resultIndex !== undefined || entry.agent !== undefined) ?? [];
+	const singleChild = childEntries.length === 1;
 	const uniqueLegacyAgent = (agent: string | undefined): boolean =>
 		agent !== undefined
 		&& archive?.entries.filter((entry) => entry.resultIndex === undefined && entry.agent === agent).length === 1;
@@ -288,8 +288,8 @@ function readResultOutput(resultsDir: string, sessionId: string, runId: string, 
 			if (entry.resultIndex !== undefined) return entry.resultIndex === stepIndex;
 			return uniqueLegacyAgent(stepAgent) && entry.agent === stepAgent;
 		}
-		if (entry.resultIndex !== undefined) return singleChild;
-		return entry.agent === undefined;
+		if (singleChild) return entry.resultIndex !== undefined || entry.agent !== undefined;
+		return entry.resultIndex === undefined && entry.agent === undefined;
 	};
 	const artifact = archive?.entries.find((entry) => entry.source === "output-artifact" && matches(entry));
 	const artifactPath = artifact?.source === "output-artifact" ? artifact.path : undefined;

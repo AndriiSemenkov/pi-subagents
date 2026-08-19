@@ -236,6 +236,22 @@ describe("inspect-rpc reply content", () => {
 		assert.equal(reply.finalOutput, "finished output");
 		assert.equal(JSON.stringify(reply).includes(root), false);
 	});
+	it("returns legacy single-child replay output at run level when resultIndex is absent", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-legacy-single-"));
+		const { resultsDir } = makeRun(root, { runId: "run-replay-legacy-single" });
+		recordWaitCompletion(makeState(root), "run-replay-legacy-single", {
+			runId: "run-replay-legacy-single",
+			sessionId: SESSION_ID,
+			results: [{ agent: "worker", output: "finished output" }],
+		}, Date.now(), 60_000, { resultsDir, sessionId: SESSION_ID });
+		const archivePath = completionArchivePath(resultsDir, "run-replay-legacy-single");
+		const archive = JSON.parse(fs.readFileSync(archivePath, "utf-8"));
+		for (const entry of archive.entries) delete entry.resultIndex;
+		fs.writeFileSync(archivePath, JSON.stringify(archive), "utf-8");
+		const reply = buildInspectReply({ requestId: "r-replay-legacy-single", asyncId: "run-replay-legacy-single" }, makeDeps(root, resultsDir));
+		assert.equal(reply.error, undefined);
+		assert.equal(reply.finalOutput, "finished output");
+	});
 	it("returns output from a durable replay artifact without exposing its path", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-artifact-"));
 		const outputPath = path.join(root, "output.txt");

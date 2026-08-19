@@ -416,6 +416,37 @@ describe("inspect-rpc reply content", () => {
 		assert.equal(topLevel.error, undefined);
 		assert.equal(topLevel.finalOutput, undefined);
 	});
+	it("does not attribute a legacy same-agent sibling's output to a later child", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-legacy-dup-"));
+		const firstOutputPath = path.join(root, "first-output.txt");
+		const secondOutputPath = path.join(root, "second-output.txt");
+		fs.writeFileSync(firstOutputPath, "first output", "utf-8");
+		fs.writeFileSync(secondOutputPath, "second output", "utf-8");
+		const { resultsDir } = makeRun(root, {
+			runId: "run-replay-legacy-dup",
+			mode: "workflow",
+			steps: [
+				{ agent: "worker", status: "complete", workflowKey: "first", startedAt: 100, endedAt: 150 },
+				{ agent: "worker", status: "complete", workflowKey: "second", startedAt: 100, endedAt: 150 },
+			],
+		});
+		recordWaitCompletion(makeState(root), "run-replay-legacy-dup", {
+			runId: "run-replay-legacy-dup",
+			sessionId: SESSION_ID,
+			results: [
+				{ agent: "worker", artifactPaths: { outputPath: firstOutputPath } },
+				{ agent: "worker", artifactPaths: { outputPath: secondOutputPath } },
+			],
+		}, Date.now(), 60_000, { resultsDir, sessionId: SESSION_ID });
+		const archivePath = completionArchivePath(resultsDir, "run-replay-legacy-dup");
+		const archive = JSON.parse(fs.readFileSync(archivePath, "utf-8"));
+		for (const entry of archive.entries) delete entry.resultIndex;
+		fs.writeFileSync(archivePath, JSON.stringify(archive), "utf-8");
+
+		const second = buildInspectReply({ requestId: "r-legacy-dup", asyncId: "run-replay-legacy-dup", childId: "second" }, makeDeps(root, resultsDir));
+		assert.equal(second.error, undefined);
+		assert.equal(second.finalOutput, undefined);
+	});
 	it("joins all text parts of the terminal assistant message for session-backed output", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-multipart-"));
 		const childSession = path.join(root, "multipart-session.jsonl");

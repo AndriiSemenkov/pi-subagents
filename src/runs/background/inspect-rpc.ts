@@ -275,15 +275,18 @@ function readResultOutput(resultsDir: string, sessionId: string, runId: string, 
 	// multi-child archive. Current child entries carry resultIndex and agent;
 	// run-level entries carry neither. Legacy archives (written before
 	// resultIndex existed) have child entries with agent but no resultIndex,
-	// so child reads fall back to the agent name and run-level reads require
-	// agent-less entries. A single-child archive is the one exception: the
-	// run's output IS that child's output.
+	// so child reads fall back to a unique agent name and run-level reads require
+	// agent-less entries. Duplicate legacy agent names fail closed. A single-child
+	// archive is the one exception: the run's output IS that child's output.
 	const childIndexes = new Set(archive?.entries.filter((entry) => entry.resultIndex !== undefined).map((entry) => entry.resultIndex));
 	const singleChild = childIndexes.size === 1;
+	const uniqueLegacyAgent = (agent: string | undefined): boolean =>
+		agent !== undefined
+		&& archive?.entries.filter((entry) => entry.resultIndex === undefined && entry.agent === agent).length === 1;
 	const matches = (entry: { resultIndex?: number; agent?: string }): boolean => {
 		if (stepIndex !== undefined) {
 			if (entry.resultIndex !== undefined) return entry.resultIndex === stepIndex;
-			return stepAgent !== undefined && entry.agent === stepAgent;
+			return uniqueLegacyAgent(stepAgent) && entry.agent === stepAgent;
 		}
 		if (entry.resultIndex !== undefined) return singleChild;
 		return entry.agent === undefined;

@@ -238,10 +238,10 @@ function readResultOutput(resultsDir: string, sessionId: string, runId: string, 
 	const archive = replay ? readCompletionArchive(replay.archivePath) : undefined;
 	const artifact = stepIndex === undefined
 		? archive?.entries.find((entry) => entry.source === "output-artifact")
-		: archive?.entries[stepIndex];
+		: archive?.entries.find((entry) => entry.resultIndex === stepIndex && entry.source === "output-artifact");
 	const artifactPath = artifact?.source === "output-artifact" ? artifact.path : undefined;
 	if (artifactPath) return readOutputArtifact(artifactPath);
-	const output = archive?.entries.find((entry) => entry.source === "result-tail")?.text;
+	const output = stepIndex === undefined ? archive?.entries.find((entry) => entry.source === "result-tail")?.text : undefined;
 	return output ? { output } : {};
 }
 

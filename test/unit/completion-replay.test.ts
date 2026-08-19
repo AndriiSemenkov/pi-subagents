@@ -283,7 +283,7 @@ describe("completion replay", () => {
 				],
 			}, Date.now());
 			const archive = readCompletionArchive(archivePath);
-			assert.deepEqual(archive?.entries[0], { agent: "saved", source: "output-artifact", path: savedOutput });
+			assert.deepEqual(archive?.entries[0], { agent: "saved", resultIndex: 0, source: "output-artifact", path: savedOutput });
 			const fallback = archive?.entries[1];
 			assert.equal(fallback?.source, "result-tail");
 			assert.equal(fallback?.truncated, true);

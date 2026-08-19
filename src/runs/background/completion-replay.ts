@@ -14,6 +14,7 @@ const lastCleanupByResultsDir = new Map<string, number>();
 
 export interface CompletionArchiveEntry {
 	agent?: string;
+	resultIndex?: number;
 	source: "output-artifact" | "session" | "result-tail";
 	path?: string;
 	text?: string;
@@ -73,18 +74,19 @@ export function writeCompletionArchive(resultsDir: string, runId: string, data: 
 	const entries: CompletionArchiveEntry[] = [];
 	const fallback: string[] = [];
 	const results = Array.isArray(data.results) ? data.results : [];
-	for (const value of results) {
+	for (let resultIndex = 0; resultIndex < results.length; resultIndex++) {
+		const value = results[resultIndex];
 		if (!value || typeof value !== "object" || Array.isArray(value)) continue;
 		const child = value as Record<string, unknown>;
 		const agent = nonEmptyString(child.agent);
 		const artifactPath = outputArtifactPath(child);
 		if (artifactPath) {
-			entries.push({ ...(agent ? { agent } : {}), source: "output-artifact", path: artifactPath });
+			entries.push({ ...(agent ? { agent } : {}), resultIndex, source: "output-artifact", path: artifactPath });
 			continue;
 		}
 		const sessionPath = existingFile(child.sessionFile);
 		if (sessionPath) {
-			entries.push({ ...(agent ? { agent } : {}), source: "session", path: sessionPath });
+			entries.push({ ...(agent ? { agent } : {}), resultIndex, source: "session", path: sessionPath });
 			continue;
 		}
 		const output = nonEmptyString(child.output);
@@ -165,6 +167,7 @@ function parseArchive(value: unknown): CompletionArchive | undefined {
 		if (entry.source !== "output-artifact" && entry.source !== "session" && entry.source !== "result-tail") return [];
 		return [{
 			...(typeof entry.agent === "string" ? { agent: entry.agent } : {}),
+			...(typeof entry.resultIndex === "number" && Number.isSafeInteger(entry.resultIndex) && entry.resultIndex >= 0 ? { resultIndex: entry.resultIndex } : {}),
 			source: entry.source,
 			...(typeof entry.path === "string" ? { path: entry.path } : {}),
 			...(typeof entry.text === "string" ? { text: entry.text } : {}),

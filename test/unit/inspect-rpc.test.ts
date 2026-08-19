@@ -301,6 +301,31 @@ describe("inspect-rpc reply content", () => {
 		assert.equal(reply.finalOutput, "second output");
 		assert.equal(JSON.stringify(reply).includes(root), false);
 	});
+	it("uses the child result index when a replay mixes inline and artifact output", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-mixed-"));
+		const secondOutputPath = path.join(root, "second-output.txt");
+		fs.writeFileSync(secondOutputPath, "second artifact output", "utf-8");
+		const { resultsDir } = makeRun(root, {
+			runId: "run-replay-mixed",
+			mode: "workflow",
+			steps: [
+				{ agent: "first", status: "complete", workflowKey: "first", startedAt: 100, endedAt: 150 },
+				{ agent: "second", status: "complete", workflowKey: "second", startedAt: 100, endedAt: 150 },
+			],
+		});
+		recordWaitCompletion(makeState(root), "run-replay-mixed", {
+			runId: "run-replay-mixed",
+			sessionId: SESSION_ID,
+			results: [
+				{ output: "first inline output" },
+				{ artifactPaths: { outputPath: secondOutputPath } },
+			],
+		}, Date.now(), 60_000, { resultsDir, sessionId: SESSION_ID });
+		const reply = buildInspectReply({ requestId: "r-replay-mixed", asyncId: "run-replay-mixed", childId: "second" }, makeDeps(root, resultsDir));
+		assert.equal(reply.error, undefined);
+		assert.equal(reply.finalOutput, "second artifact output");
+		assert.equal(JSON.stringify(reply).includes(root), false);
+	});
 	it("reports an internal error when a durable replay archive is malformed", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-malformed-"));
 		const runId = "run-replay-malformed";

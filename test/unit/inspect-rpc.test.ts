@@ -16,7 +16,7 @@ import {
 } from "../../src/runs/background/inspect-rpc.ts";
 import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
-import { completionArchivePath } from "../../src/runs/background/completion-replay.ts";
+import { completionArchivePath, completionReplayPath } from "../../src/runs/background/completion-replay.ts";
 import { formatOutputArtifactContent } from "../../src/shared/artifacts.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
@@ -409,6 +409,46 @@ describe("inspect-rpc reply content", () => {
 		const topLevel = buildInspectReply({ requestId: "r-legacy-top", asyncId: "run-replay-legacy" }, makeDeps(root, resultsDir));
 		assert.equal(topLevel.error, undefined);
 		assert.equal(topLevel.finalOutput, undefined);
+	});
+	it("joins all text parts of the terminal assistant message for session-backed output", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-multipart-"));
+		const childSession = path.join(root, "multipart-session.jsonl");
+		fs.writeFileSync(childSession, [
+			JSON.stringify({ message: userMessage("child task") }),
+			JSON.stringify({ message: { role: "assistant", content: [{ type: "text", text: "part one" }, { type: "text", text: "part two" }] } }),
+		].join("\n") + "\n", "utf-8");
+		const { resultsDir } = makeRun(root, {
+			runId: "run-replay-multipart",
+			mode: "workflow",
+			steps: [{ agent: "worker", status: "complete", workflowKey: "worker", startedAt: 100, endedAt: 150, sessionFile: childSession }],
+		});
+		recordWaitCompletion(makeState(root), "run-replay-multipart", {
+			runId: "run-replay-multipart",
+			sessionId: SESSION_ID,
+			results: [{ sessionFile: childSession }],
+		}, Date.now(), 60_000, { resultsDir, sessionId: SESSION_ID });
+		const reply = buildInspectReply({ requestId: "r-multipart", asyncId: "run-replay-multipart", childId: "worker" }, makeDeps(root, resultsDir));
+		assert.equal(reply.error, undefined);
+		assert.equal(reply.finalOutput, "part one\npart two");
+	});
+	it("reports an internal error when a current-version replay record fails validation", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-invalid-"));
+		const runId = "run-replay-invalid";
+		const { resultsDir } = makeRun(root, { runId });
+		recordWaitCompletion(makeState(root), runId, {
+			runId,
+			sessionId: SESSION_ID,
+			results: [{ output: "finished output" }],
+		}, Date.now(), 60_000, { resultsDir, sessionId: SESSION_ID });
+		// Corrupt the record's archivePath so validation rejects it while the
+		// record still parses and names this run and session.
+		const replayFile = completionReplayPath(resultsDir, runId);
+		const record = JSON.parse(fs.readFileSync(replayFile, "utf-8"));
+		record.archivePath = path.join(root, "elsewhere.json");
+		fs.writeFileSync(replayFile, JSON.stringify(record), "utf-8");
+		const reply = buildInspectReply({ requestId: "r-replay-invalid", asyncId: runId }, makeDeps(root, resultsDir));
+		assert.equal(reply.error?.code, "internal");
+		assert.equal(reply.finalOutput, undefined);
 	});
 	it("reports an internal error when a durable replay archive is malformed", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-malformed-"));

@@ -4,7 +4,7 @@ import { decodeUtf8Tail } from "../../shared/utf8.ts";
 import { DIRS, type AsyncStatus, type NestedRunSummary, type SubagentState } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { readSessionMessagesTail, type SessionTranscriptMessage } from "./fleet-view.ts";
-import { readCompletionArchive, readCompletionReplay } from "./completion-replay.ts";
+import { completionReplayPath, readCompletionArchive, readCompletionReplay } from "./completion-replay.ts";
 import { resultPayloadPathForSessionRun } from "./result-files.ts";
 import { resolveSubagentRunId } from "./run-id-resolver.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
@@ -234,17 +234,43 @@ function readOutputArtifact(outputPath: string): { output?: string; errorText?: 
 function readSessionBackedOutput(sessionPath: string, trustedRoots: string[]): { output?: string } {
 	if (trustedRoots.length === 0) return {};
 	// The archive retains the child's session file as its output record. The
-	// final answer is the last assistant text in that transcript.
+	// final answer is the terminal assistant message's text — all text parts
+	// of that one session record, not just the last part.
 	const tail = readSessionMessagesTail(sessionPath, MAX_MESSAGE_LINES, trustedRoots);
-	const lastAssistant = [...tail.messages].reverse().find((message) => message.role === "assistant" && message.kind === "text");
-	return lastAssistant ? { output: lastAssistant.text } : {};
+	const last = tail.messages.findLast((message) => message.role === "assistant" && message.kind === "text");
+	if (!last) return {};
+	const parts = tail.messages.filter((message) => message.recordIndex === last.recordIndex && message.kind === "text");
+	return { output: parts.map((part) => part.text).join("\n") };
 }
 
 function readResultOutput(resultsDir: string, sessionId: string, runId: string, stepIndex: number | undefined, trustedRoots: string[], stepAgent?: string): { output?: string; errorText?: string } {
 	const resultPath = resultPayloadPathForSessionRun(resultsDir, sessionId, runId);
 	if (resultPath) return resultOutput(JSON.parse(fs.readFileSync(resultPath, "utf-8")) as unknown, stepIndex);
+	// Read the raw record first: readCompletionReplay best-effort deletes
+	// invalid or expired records, so reading after it cannot distinguish
+	// "never existed" from "failed validation".
+	const replayPath = completionReplayPath(resultsDir, runId);
+	let rawReplay: unknown;
+	try {
+		rawReplay = JSON.parse(fs.readFileSync(replayPath, "utf-8")) as unknown;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
 	const replay = readCompletionReplay(resultsDir, runId, { sessionId });
-	const archive = replay ? readCompletionArchive(replay.archivePath) : undefined;
+	if (!replay) {
+		// readCompletionReplay also returns undefined for absent, expired, foreign,
+		// and unknown-version records. A current-version, unexpired record for this
+		// run and session that still failed validation is an inspection failure,
+		// not a child without output — surface it instead of replying success with
+		// no finalOutput.
+		if (isRecord(rawReplay) && rawReplay.version === 1 && rawReplay.runId === runId
+			&& rawReplay.sessionId === sessionId
+			&& typeof rawReplay.expiresAt === "number" && rawReplay.expiresAt > Date.now()) {
+			throw new Error("Completion replay record failed validation.");
+		}
+		return {};
+	}
+	const archive = readCompletionArchive(replay.archivePath);
 	// Run-level inspection must not attribute a child's output to the run in a
 	// multi-child archive. Current child entries carry resultIndex and agent;
 	// run-level entries carry neither. Legacy archives (written before

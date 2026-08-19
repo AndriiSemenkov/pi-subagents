@@ -184,6 +184,9 @@ export interface SessionTranscriptMessage {
 	text: string;
 	name?: string;
 	isError?: boolean;
+	/** Ordinal of the session record this part came from, so consumers can
+	 *  regroup multi-part messages (one session record can yield several parts). */
+	recordIndex?: number;
 }
 
 function sessionMessageParts(record: unknown): SessionTranscriptMessage[] {
@@ -237,14 +240,16 @@ export function readSessionMessagesTail(sessionFile: string, maxMessages: number
 	if (tail.error) warnings.push(`Session read failed for ${sessionFile}: ${tail.error}`);
 	const parsedMessages: SessionTranscriptMessage[] = [];
 	let malformed = 0;
+	let recordIndex = 0;
 	for (const line of tail.lines) {
 		if (!line.trim()) continue;
 		try {
 			const parsed = JSON.parse(line) as unknown;
-			parsedMessages.push(...sessionMessageParts(parsed));
+			for (const part of sessionMessageParts(parsed)) parsedMessages.push({ ...part, recordIndex });
 		} catch {
 			malformed++;
 		}
+		recordIndex++;
 	}
 	if (malformed > 0) warnings.push(`Skipped ${malformed} malformed session tail line${malformed === 1 ? "" : "s"}.`);
 	const messages = parsedMessages.slice(-maxMessages);

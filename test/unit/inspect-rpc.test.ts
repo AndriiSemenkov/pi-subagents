@@ -233,7 +233,7 @@ describe("inspect-rpc reply content", () => {
 		}, Date.now(), 60_000, { resultsDir, sessionId: SESSION_ID });
 		const reply = buildInspectReply({ requestId: "r-replay", asyncId: "run-replay" }, makeDeps(root, resultsDir));
 		assert.equal(reply.error, undefined);
-		assert.equal(reply.finalOutput, "[worker]\nfinished output");
+		assert.equal(reply.finalOutput, "finished output");
 		assert.equal(JSON.stringify(reply).includes(root), false);
 	});
 	it("returns output from a durable replay artifact without exposing its path", () => {
@@ -317,14 +317,20 @@ describe("inspect-rpc reply content", () => {
 			runId: "run-replay-mixed",
 			sessionId: SESSION_ID,
 			results: [
-				{ output: "first inline output" },
-				{ artifactPaths: { outputPath: secondOutputPath } },
+				{ agent: "first", output: "first inline output" },
+				{ agent: "second", artifactPaths: { outputPath: secondOutputPath } },
 			],
 		}, Date.now(), 60_000, { resultsDir, sessionId: SESSION_ID });
-		const reply = buildInspectReply({ requestId: "r-replay-mixed", asyncId: "run-replay-mixed", childId: "second" }, makeDeps(root, resultsDir));
-		assert.equal(reply.error, undefined);
-		assert.equal(reply.finalOutput, "second artifact output");
-		assert.equal(JSON.stringify(reply).includes(root), false);
+		const first = buildInspectReply({ requestId: "r-replay-mixed-first", asyncId: "run-replay-mixed", childId: "first" }, makeDeps(root, resultsDir));
+		assert.equal(first.error, undefined);
+		assert.equal(first.finalOutput, "first inline output");
+		const second = buildInspectReply({ requestId: "r-replay-mixed", asyncId: "run-replay-mixed", childId: "second" }, makeDeps(root, resultsDir));
+		assert.equal(second.error, undefined);
+		assert.equal(second.finalOutput, "second artifact output");
+		const topLevel = buildInspectReply({ requestId: "r-replay-mixed-top", asyncId: "run-replay-mixed" }, makeDeps(root, resultsDir));
+		assert.equal(topLevel.error, undefined);
+		assert.equal(topLevel.finalOutput, undefined);
+		assert.equal(JSON.stringify(first).includes(root), false);
 	});
 	it("returns session-backed replay output from the child's archived session transcript", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-session-"));

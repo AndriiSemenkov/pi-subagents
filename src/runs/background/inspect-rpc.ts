@@ -294,7 +294,7 @@ function readResultOutput(resultsDir: string, sessionId: string, runId: string, 
 	const sessionEntry = archive?.entries.find((entry) => entry.source === "session" && matches(entry));
 	const sessionPath = sessionEntry?.source === "session" ? sessionEntry.path : undefined;
 	if (sessionPath) return readSessionBackedOutput(sessionPath, trustedRoots);
-	const output = stepIndex === undefined ? archive?.entries.find((entry) => entry.source === "result-tail")?.text : undefined;
+	const output = archive?.entries.find((entry) => entry.source === "result-tail" && matches(entry))?.text;
 	return output ? { output } : {};
 }
 

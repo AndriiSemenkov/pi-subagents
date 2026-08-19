@@ -72,7 +72,6 @@ function outputArtifactPath(child: Record<string, unknown>): string | undefined 
 /** Create a small archive that references saved child artifacts and retains only bounded fallback output text. */
 export function writeCompletionArchive(resultsDir: string, runId: string, data: Record<string, unknown>, createdAt: number): string {
 	const entries: CompletionArchiveEntry[] = [];
-	const fallback: string[] = [];
 	const results = Array.isArray(data.results) ? data.results : [];
 	for (let resultIndex = 0; resultIndex < results.length; resultIndex++) {
 		const value = results[resultIndex];
@@ -92,20 +91,26 @@ export function writeCompletionArchive(resultsDir: string, runId: string, data: 
 		const output = nonEmptyString(child.output);
 		const error = nonEmptyString(child.error);
 		if (output || error) {
-			fallback.push([agent ? `[${agent}]` : undefined, error ? `Error: ${error}` : undefined, output].filter(Boolean).join("\n"));
+			const bounded = utf8Tail([error ? `Error: ${error}` : undefined, output].filter(Boolean).join("\n"), ARCHIVE_TEXT_LIMIT_BYTES);
+			entries.push({
+				...(agent ? { agent } : {}),
+				resultIndex,
+				source: "result-tail",
+				text: bounded.text,
+				...(bounded.truncated ? { truncated: true } : {}),
+			});
 		}
 	}
 	if (results.length === 0) {
 		const sessionPath = existingFile(data.sessionFile);
 		if (sessionPath) entries.push({ source: "session", path: sessionPath });
 	}
-	if (entries.length === 0 && fallback.length === 0) {
+	if (entries.length === 0) {
 		const summary = nonEmptyString(data.summary);
-		if (summary) fallback.push(summary);
-	}
-	if (fallback.length > 0) {
-		const bounded = utf8Tail(fallback.join("\n\n"), ARCHIVE_TEXT_LIMIT_BYTES);
-		entries.push({ source: "result-tail", text: bounded.text, ...(bounded.truncated ? { truncated: true } : {}) });
+		if (summary) {
+			const bounded = utf8Tail(summary, ARCHIVE_TEXT_LIMIT_BYTES);
+			entries.push({ source: "result-tail", text: bounded.text, ...(bounded.truncated ? { truncated: true } : {}) });
+		}
 	}
 	const archive: CompletionArchive = { version: ARCHIVE_VERSION, runId, createdAt, entries };
 	const archivePath = completionArchivePath(resultsDir, runId);

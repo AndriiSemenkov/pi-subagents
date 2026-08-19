@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import { sanitizeDisplayText, truncateDisplayText } from "../../shared/display-text.ts";
+import { decodeUtf8Tail } from "../../shared/utf8.ts";
 import { DIRS, type AsyncStatus, type NestedRunSummary, type SubagentState } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { readSessionMessagesTail, type SessionTranscriptMessage } from "./fleet-view.ts";
@@ -7,7 +8,6 @@ import { readCompletionArchive, readCompletionReplay } from "./completion-replay
 import { resultPayloadPathForSessionRun } from "./result-files.ts";
 import { resolveSubagentRunId } from "./run-id-resolver.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
-import { decodeUtf8Tail } from "../../shared/utf8.ts";
 
 /**
  * On-demand, host-facing async child inspection.
@@ -75,6 +75,7 @@ const MAX_FINAL_OUTPUT_LENGTH = 8_000;
 const MAX_MESSAGE_TEXT_LENGTH = 1_000;
 const DEFAULT_MESSAGE_LINES = 100;
 const MAX_MESSAGE_LINES = 200;
+const FAILED_OUTPUT_ARTIFACT_PREFIX = "Subagent run failed before producing output.\n\nError:\n";
 export const MAX_SERIALIZED_BYTES = 64 * 1024;
 
 export interface InspectDeps {
@@ -208,14 +209,23 @@ function resultOutput(data: unknown, stepIndex: number | undefined): { output?: 
 	return {};
 }
 
-function readOutputArtifact(outputPath: string): string {
+function readOutputArtifact(outputPath: string): { output?: string; errorText?: string } {
 	const file = fs.openSync(outputPath, "r");
 	try {
+		const prefix = Buffer.allocUnsafe(Buffer.byteLength(FAILED_OUTPUT_ARTIFACT_PREFIX, "utf-8"));
+		const prefixBytes = fs.readSync(file, prefix, 0, prefix.length, 0);
+		const failedOutput = prefix.subarray(0, prefixBytes).toString("utf-8") === FAILED_OUTPUT_ARTIFACT_PREFIX;
 		const size = fs.fstatSync(file).size;
 		const length = Math.min(size, MAX_FINAL_OUTPUT_LENGTH * 4);
 		const buffer = Buffer.allocUnsafe(length);
 		const bytesRead = fs.readSync(file, buffer, 0, length, size - length);
-		return decodeUtf8Tail(buffer.subarray(0, bytesRead));
+		let text = decodeUtf8Tail(buffer.subarray(0, bytesRead));
+		if (!failedOutput) return { output: text };
+		const metadata = text.lastIndexOf("\nMetadata: ");
+		if (metadata >= 0 && !text.slice(metadata + 1).includes("\n")) text = text.slice(0, metadata);
+		const transcript = text.lastIndexOf("\n\nTranscript: ");
+		if (transcript >= 0 && !text.slice(transcript + 2).includes("\n")) text = text.slice(0, transcript);
+		return { errorText: text.startsWith(FAILED_OUTPUT_ARTIFACT_PREFIX) ? text.slice(FAILED_OUTPUT_ARTIFACT_PREFIX.length) : text };
 	} finally {
 		fs.closeSync(file);
 	}
@@ -230,7 +240,7 @@ function readResultOutput(resultsDir: string, sessionId: string, runId: string, 
 		? archive?.entries.find((entry) => entry.source === "output-artifact")
 		: archive?.entries[stepIndex];
 	const artifactPath = artifact?.source === "output-artifact" ? artifact.path : undefined;
-	if (artifactPath) return { output: readOutputArtifact(artifactPath) };
+	if (artifactPath) return readOutputArtifact(artifactPath);
 	const output = archive?.entries.find((entry) => entry.source === "result-tail")?.text;
 	return output ? { output } : {};
 }
@@ -343,7 +353,10 @@ export function buildInspectReply(request: InspectRequest, deps: InspectDeps = {
 
 		const result = readResultOutput(resultsDir, currentSessionId, node.status.runId, node.stepIndex);
 		const failedText = step?.error ?? node.status.error;
-		const finalOutputRaw = result.output ?? result.errorText ?? failedText;
+		if (result.output === undefined && result.errorText === undefined && failedText !== undefined) {
+			return errorReply(request, "internal", "Inspection could not read the async run artifacts.");
+		}
+		const finalOutputRaw = result.output ?? result.errorText;
 
 		const truncated = { task: false, messages: 0, finalOutput: false };
 		const boundedTask = task !== undefined ? boundContent(task, MAX_TASK_LENGTH) : undefined;

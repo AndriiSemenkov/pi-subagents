@@ -17,6 +17,7 @@ import {
 import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 import { completionArchivePath } from "../../src/runs/background/completion-replay.ts";
+import { formatOutputArtifactContent } from "../../src/shared/artifacts.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
 const SESSION_ID = "session-current";
@@ -41,6 +42,7 @@ interface FixtureOptions {
 	steps?: Array<Record<string, unknown>>;
 	sessionMessages?: Array<Record<string, unknown>>;
 	resultPayload?: Record<string, unknown>;
+	error?: string;
 }
 
 function makeRun(root: string, options: FixtureOptions): { asyncDir: string; resultsDir: string; sessionFile: string } {
@@ -63,6 +65,7 @@ function makeRun(root: string, options: FixtureOptions): { asyncDir: string; res
 		startedAt: 100,
 		endedAt: 200,
 		lastUpdate: 200,
+		...(options.error ? { error: options.error } : {}),
 		sessionFile,
 		steps,
 	}, null, 2), "utf-8");
@@ -248,6 +251,29 @@ describe("inspect-rpc reply content", () => {
 		assert.equal(reply.finalOutput, "artifact output");
 		assert.equal(JSON.stringify(reply).includes(outputPath), false);
 	});
+	it("returns a failed replay artifact error without private metadata", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-failed-artifact-"));
+		const outputPath = path.join(root, "output.txt");
+		const transcriptPath = path.join(root, "transcript.jsonl");
+		const metadataPath = path.join(root, "metadata.json");
+		const childError = `${"x".repeat(12_000)} child failure tail ${"x".repeat(28_000)}`;
+		fs.writeFileSync(outputPath, formatOutputArtifactContent({ output: "", error: childError, transcriptPath, metadataPath }), "utf-8");
+		const { resultsDir } = makeRun(root, {
+			runId: "run-replay-failed-artifact",
+			mode: "workflow",
+			steps: [{ agent: "worker", status: "failed", workflowKey: "worker", startedAt: 100, endedAt: 150 }],
+		});
+		recordWaitCompletion(makeState(root), "run-replay-failed-artifact", {
+			runId: "run-replay-failed-artifact",
+			sessionId: SESSION_ID,
+			results: [{ artifactPaths: { outputPath } }],
+		}, Date.now(), 60_000, { resultsDir, sessionId: SESSION_ID });
+		const reply = buildInspectReply({ requestId: "r-replay-failed-artifact", asyncId: "run-replay-failed-artifact", childId: "worker" }, makeDeps(root, resultsDir));
+		const serialized = JSON.stringify(reply);
+		assert.equal(reply.error, undefined);
+		assert.ok(reply.finalOutput?.includes("child failure tail"));
+		for (const privateText of [root, outputPath, transcriptPath, metadataPath, "Transcript:", "Metadata:"]) assert.equal(serialized.includes(privateText), false);
+	});
 	it("returns the selected child output from a multi-step replay artifact archive", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-children-"));
 		const firstOutputPath = path.join(root, "first-output.txt");
@@ -295,6 +321,14 @@ describe("inspect-rpc reply content", () => {
 		const { resultsDir } = makeRun(root, { runId: "run-result-malformed", resultPayload: { summary: "valid" } });
 		fs.writeFileSync(path.join(resultsDir, "run-result-malformed.json"), "{ invalid", "utf-8");
 		const reply = buildInspectReply({ requestId: "r-result-malformed", asyncId: "run-result-malformed" }, makeDeps(root, resultsDir));
+		assert.equal(reply.error?.code, "internal");
+		assert.equal(reply.finalOutput, undefined);
+		assert.equal(JSON.stringify(reply).includes(root), false);
+	});
+	it("fails closed instead of returning a private status error", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-status-error-"));
+		const { resultsDir } = makeRun(root, { runId: "run-status-error", state: "failed", error: `Failed to write ${path.join(root, "result.json")}` });
+		const reply = buildInspectReply({ requestId: "r-status-error", asyncId: "run-status-error" }, makeDeps(root, resultsDir));
 		assert.equal(reply.error?.code, "internal");
 		assert.equal(reply.finalOutput, undefined);
 		assert.equal(JSON.stringify(reply).includes(root), false);

@@ -254,8 +254,8 @@ export function buildInspectReply(request: InspectRequest, deps: InspectDeps = {
 	let resolved: ReturnType<typeof resolveSubagentRunId>;
 	try {
 		resolved = resolveSubagentRunId(request.asyncId, { asyncDirRoot, resultsDir, state: deps.state });
-	} catch (error) {
-		return errorReply(request, "invalid_request", error instanceof Error ? error.message : String(error));
+	} catch {
+		return errorReply(request, "invalid_request", "The requested async run could not be resolved.");
 	}
 	if (!resolved || resolved.kind === "foreground") {
 		return errorReply(request, "not_found", `Async run '${request.asyncId}' was not found.`);
@@ -343,8 +343,8 @@ export function buildInspectReply(request: InspectRequest, deps: InspectDeps = {
 			...(truncated.task || truncated.finalOutput || truncated.messages > 0 ? { truncated } : {}),
 		};
 		return enforceByteBudget(reply);
-	} catch (error) {
-		return errorReply(request, "internal", error instanceof Error ? error.message : String(error));
+	} catch {
+		return errorReply(request, "internal", "Inspection could not read the async run artifacts.");
 	}
 }
 

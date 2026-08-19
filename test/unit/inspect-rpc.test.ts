@@ -103,6 +103,14 @@ describe("inspect-rpc request parsing", () => {
 });
 
 describe("inspect-rpc resolution and ownership", () => {
+	it("does not expose async artifact paths when status is malformed", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-malformed-"));
+		const { asyncDir, resultsDir } = makeRun(root, { runId: "run-malformed" });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), "{ not json", "utf-8");
+		const reply = buildInspectReply({ requestId: "r-malformed", asyncId: "run-malformed" }, makeDeps(root, resultsDir));
+		assert.equal(reply.error?.code, "internal");
+		assert.equal(JSON.stringify(reply).includes(root), false);
+	});
 	it("returns not_found for an unknown run", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-missing-"));
 		const reply = buildInspectReply({ requestId: "r1", asyncId: "nope" }, makeDeps(root, path.join(root, "results")));

@@ -226,7 +226,10 @@ function readResultOutput(resultsDir: string, sessionId: string, runId: string, 
 	if (resultPath) return resultOutput(JSON.parse(fs.readFileSync(resultPath, "utf-8")) as unknown, stepIndex);
 	const replay = readCompletionReplay(resultsDir, runId, { sessionId });
 	const archive = replay ? readCompletionArchive(replay.archivePath) : undefined;
-	const artifactPath = archive?.entries.find((entry) => entry.source === "output-artifact")?.path;
+	const artifact = stepIndex === undefined
+		? archive?.entries.find((entry) => entry.source === "output-artifact")
+		: archive?.entries[stepIndex];
+	const artifactPath = artifact?.source === "output-artifact" ? artifact.path : undefined;
 	if (artifactPath) return { output: readOutputArtifact(artifactPath) };
 	const output = archive?.entries.find((entry) => entry.source === "result-tail")?.text;
 	return output ? { output } : {};

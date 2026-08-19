@@ -248,6 +248,33 @@ describe("inspect-rpc reply content", () => {
 		assert.equal(reply.finalOutput, "artifact output");
 		assert.equal(JSON.stringify(reply).includes(outputPath), false);
 	});
+	it("returns the selected child output from a multi-step replay artifact archive", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-children-"));
+		const firstOutputPath = path.join(root, "first-output.txt");
+		const secondOutputPath = path.join(root, "second-output.txt");
+		fs.writeFileSync(firstOutputPath, "first output", "utf-8");
+		fs.writeFileSync(secondOutputPath, "second output", "utf-8");
+		const { resultsDir } = makeRun(root, {
+			runId: "run-replay-children",
+			mode: "workflow",
+			steps: [
+				{ agent: "first", status: "complete", workflowKey: "first", startedAt: 100, endedAt: 150 },
+				{ agent: "second", status: "complete", workflowKey: "second", startedAt: 100, endedAt: 150 },
+			],
+		});
+		recordWaitCompletion(makeState(root), "run-replay-children", {
+			runId: "run-replay-children",
+			sessionId: SESSION_ID,
+			results: [
+				{ artifactPaths: { outputPath: firstOutputPath } },
+				{ artifactPaths: { outputPath: secondOutputPath } },
+			],
+		}, Date.now(), 60_000, { resultsDir, sessionId: SESSION_ID });
+		const reply = buildInspectReply({ requestId: "r-replay-children", asyncId: "run-replay-children", childId: "second" }, makeDeps(root, resultsDir));
+		assert.equal(reply.error, undefined);
+		assert.equal(reply.finalOutput, "second output");
+		assert.equal(JSON.stringify(reply).includes(root), false);
+	});
 	it("reports an internal error when a durable replay archive is malformed", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-malformed-"));
 		const runId = "run-replay-malformed";

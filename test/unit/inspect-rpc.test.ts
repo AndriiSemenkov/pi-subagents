@@ -326,6 +326,28 @@ describe("inspect-rpc reply content", () => {
 		assert.equal(reply.finalOutput, "second artifact output");
 		assert.equal(JSON.stringify(reply).includes(root), false);
 	});
+	it("returns session-backed replay output from the child's archived session transcript", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-session-"));
+		const childSession = path.join(root, "child-session.jsonl");
+		fs.writeFileSync(childSession, [
+			JSON.stringify({ message: userMessage("child task") }),
+			JSON.stringify({ message: assistantMessage("session-backed answer") }),
+		].join("\n") + "\n", "utf-8");
+		const { resultsDir } = makeRun(root, {
+			runId: "run-replay-session",
+			mode: "workflow",
+			steps: [{ agent: "worker", status: "complete", workflowKey: "worker", startedAt: 100, endedAt: 150, sessionFile: childSession }],
+		});
+		recordWaitCompletion(makeState(root), "run-replay-session", {
+			runId: "run-replay-session",
+			sessionId: SESSION_ID,
+			results: [{ sessionFile: childSession }],
+		}, Date.now(), 60_000, { resultsDir, sessionId: SESSION_ID });
+		const reply = buildInspectReply({ requestId: "r-replay-session", asyncId: "run-replay-session", childId: "worker" }, makeDeps(root, resultsDir));
+		assert.equal(reply.error, undefined);
+		assert.equal(reply.finalOutput, "session-backed answer");
+		assert.equal(JSON.stringify(reply).includes(childSession), false);
+	});
 	it("reports an internal error when a durable replay archive is malformed", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-malformed-"));
 		const runId = "run-replay-malformed";

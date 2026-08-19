@@ -231,7 +231,16 @@ function readOutputArtifact(outputPath: string): { output?: string; errorText?: 
 	}
 }
 
-function readResultOutput(resultsDir: string, sessionId: string, runId: string, stepIndex: number | undefined): { output?: string; errorText?: string } {
+function readSessionBackedOutput(sessionPath: string, trustedRoots: string[]): { output?: string } {
+	if (trustedRoots.length === 0) return {};
+	// The archive retains the child's session file as its output record. The
+	// final answer is the last assistant text in that transcript.
+	const tail = readSessionMessagesTail(sessionPath, MAX_MESSAGE_LINES, trustedRoots);
+	const lastAssistant = [...tail.messages].reverse().find((message) => message.role === "assistant" && message.kind === "text");
+	return lastAssistant ? { output: lastAssistant.text } : {};
+}
+
+function readResultOutput(resultsDir: string, sessionId: string, runId: string, stepIndex: number | undefined, trustedRoots: string[]): { output?: string; errorText?: string } {
 	const resultPath = resultPayloadPathForSessionRun(resultsDir, sessionId, runId);
 	if (resultPath) return resultOutput(JSON.parse(fs.readFileSync(resultPath, "utf-8")) as unknown, stepIndex);
 	const replay = readCompletionReplay(resultsDir, runId, { sessionId });
@@ -241,6 +250,11 @@ function readResultOutput(resultsDir: string, sessionId: string, runId: string, 
 		: archive?.entries.find((entry) => entry.resultIndex === stepIndex && entry.source === "output-artifact");
 	const artifactPath = artifact?.source === "output-artifact" ? artifact.path : undefined;
 	if (artifactPath) return readOutputArtifact(artifactPath);
+	const sessionEntry = stepIndex === undefined
+		? archive?.entries.find((entry) => entry.source === "session")
+		: archive?.entries.find((entry) => entry.resultIndex === stepIndex && entry.source === "session");
+	const sessionPath = sessionEntry?.source === "session" ? sessionEntry.path : undefined;
+	if (sessionPath) return readSessionBackedOutput(sessionPath, trustedRoots);
 	const output = stepIndex === undefined ? archive?.entries.find((entry) => entry.source === "result-tail")?.text : undefined;
 	return output ? { output } : {};
 }
@@ -351,7 +365,7 @@ export function buildInspectReply(request: InspectRequest, deps: InspectDeps = {
 			}
 		}
 
-		const result = readResultOutput(resultsDir, currentSessionId, node.status.runId, node.stepIndex);
+		const result = readResultOutput(resultsDir, currentSessionId, node.status.runId, node.stepIndex, trustedRoots);
 		const failedText = step?.error ?? node.status.error;
 		if (result.output === undefined && result.errorText === undefined && failedText !== undefined) {
 			return errorReply(request, "internal", "Inspection could not read the async run artifacts.");

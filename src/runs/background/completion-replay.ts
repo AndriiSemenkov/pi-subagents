@@ -228,7 +228,9 @@ export function readCompletionReplay(resultsDir: string, runId: string, options:
 
 export function readCompletionArchive(archivePath: string): CompletionArchive | undefined {
 	try {
-		return parseArchive(JSON.parse(fs.readFileSync(archivePath, "utf-8")));
+		const archive = parseArchive(JSON.parse(fs.readFileSync(archivePath, "utf-8")));
+		if (!archive) throw new Error("Completion archive is malformed.");
+		return archive;
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 		throw error;

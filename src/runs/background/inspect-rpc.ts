@@ -7,6 +7,7 @@ import { readCompletionArchive, readCompletionReplay } from "./completion-replay
 import { resultPayloadPathForSessionRun } from "./result-files.ts";
 import { resolveSubagentRunId } from "./run-id-resolver.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
+import { decodeUtf8Tail } from "../../shared/utf8.ts";
 
 /**
  * On-demand, host-facing async child inspection.
@@ -207,11 +208,26 @@ function resultOutput(data: unknown, stepIndex: number | undefined): { output?: 
 	return {};
 }
 
+function readOutputArtifact(outputPath: string): string {
+	const file = fs.openSync(outputPath, "r");
+	try {
+		const size = fs.fstatSync(file).size;
+		const length = Math.min(size, MAX_FINAL_OUTPUT_LENGTH * 4);
+		const buffer = Buffer.allocUnsafe(length);
+		const bytesRead = fs.readSync(file, buffer, 0, length, size - length);
+		return decodeUtf8Tail(buffer.subarray(0, bytesRead));
+	} finally {
+		fs.closeSync(file);
+	}
+}
+
 function readResultOutput(resultsDir: string, sessionId: string, runId: string, stepIndex: number | undefined): { output?: string; errorText?: string } {
 	const resultPath = resultPayloadPathForSessionRun(resultsDir, sessionId, runId);
 	if (resultPath) return resultOutput(JSON.parse(fs.readFileSync(resultPath, "utf-8")) as unknown, stepIndex);
 	const replay = readCompletionReplay(resultsDir, runId, { sessionId });
 	const archive = replay ? readCompletionArchive(replay.archivePath) : undefined;
+	const artifactPath = archive?.entries.find((entry) => entry.source === "output-artifact")?.path;
+	if (artifactPath) return { output: readOutputArtifact(artifactPath) };
 	const output = archive?.entries.find((entry) => entry.source === "result-tail")?.text;
 	return output ? { output } : {};
 }

@@ -16,6 +16,7 @@ import {
 } from "../../src/runs/background/inspect-rpc.ts";
 import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
+import { completionArchivePath } from "../../src/runs/background/completion-replay.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
 const SESSION_ID = "session-current";
@@ -230,6 +231,36 @@ describe("inspect-rpc reply content", () => {
 		const reply = buildInspectReply({ requestId: "r-replay", asyncId: "run-replay" }, makeDeps(root, resultsDir));
 		assert.equal(reply.error, undefined);
 		assert.equal(reply.finalOutput, "[worker]\nfinished output");
+		assert.equal(JSON.stringify(reply).includes(root), false);
+	});
+	it("returns output from a durable replay artifact without exposing its path", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-artifact-"));
+		const outputPath = path.join(root, "output.txt");
+		fs.writeFileSync(outputPath, "artifact output", "utf-8");
+		const { resultsDir } = makeRun(root, { runId: "run-replay-artifact" });
+		recordWaitCompletion(makeState(root), "run-replay-artifact", {
+			runId: "run-replay-artifact",
+			sessionId: SESSION_ID,
+			results: [{ artifactPaths: { outputPath }, output: "ignored fallback" }],
+		}, Date.now(), 60_000, { resultsDir, sessionId: SESSION_ID });
+		const reply = buildInspectReply({ requestId: "r-replay-artifact", asyncId: "run-replay-artifact" }, makeDeps(root, resultsDir));
+		assert.equal(reply.error, undefined);
+		assert.equal(reply.finalOutput, "artifact output");
+		assert.equal(JSON.stringify(reply).includes(outputPath), false);
+	});
+	it("reports an internal error when a durable replay archive is malformed", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-malformed-"));
+		const runId = "run-replay-malformed";
+		const { resultsDir } = makeRun(root, { runId });
+		recordWaitCompletion(makeState(root), runId, {
+			runId,
+			sessionId: SESSION_ID,
+			results: [{ output: "finished output" }],
+		}, Date.now(), 60_000, { resultsDir, sessionId: SESSION_ID });
+		fs.writeFileSync(completionArchivePath(resultsDir, runId), JSON.stringify({ version: 1, runId, createdAt: 1, entries: "not-an-array" }), "utf-8");
+		const reply = buildInspectReply({ requestId: "r-replay-malformed", asyncId: runId }, makeDeps(root, resultsDir));
+		assert.equal(reply.error?.code, "internal");
+		assert.equal(reply.finalOutput, undefined);
 		assert.equal(JSON.stringify(reply).includes(root), false);
 	});
 	it("reports an internal error when an indexed result payload is malformed", () => {

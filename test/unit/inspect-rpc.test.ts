@@ -374,6 +374,42 @@ describe("inspect-rpc reply content", () => {
 		assert.equal(reply.error, undefined);
 		assert.equal(reply.finalOutput, undefined);
 	});
+	it("routes legacy replay archives (no resultIndex) by agent and keeps child output out of run-level replies", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-legacy-"));
+		const firstOutputPath = path.join(root, "first-output.txt");
+		const secondOutputPath = path.join(root, "second-output.txt");
+		fs.writeFileSync(firstOutputPath, "first output", "utf-8");
+		fs.writeFileSync(secondOutputPath, "second output", "utf-8");
+		const { resultsDir } = makeRun(root, {
+			runId: "run-replay-legacy",
+			mode: "workflow",
+			steps: [
+				{ agent: "first", status: "complete", workflowKey: "first", startedAt: 100, endedAt: 150 },
+				{ agent: "second", status: "complete", workflowKey: "second", startedAt: 100, endedAt: 150 },
+			],
+		});
+		recordWaitCompletion(makeState(root), "run-replay-legacy", {
+			runId: "run-replay-legacy",
+			sessionId: SESSION_ID,
+			results: [
+				{ agent: "first", artifactPaths: { outputPath: firstOutputPath } },
+				{ agent: "second", artifactPaths: { outputPath: secondOutputPath } },
+			],
+		}, Date.now(), 60_000, { resultsDir, sessionId: SESSION_ID });
+		// Downgrade the archive to the pre-resultIndex legacy shape.
+		const archivePath = completionArchivePath(resultsDir, "run-replay-legacy");
+		const archive = JSON.parse(fs.readFileSync(archivePath, "utf-8"));
+		for (const entry of archive.entries) delete entry.resultIndex;
+		fs.writeFileSync(archivePath, JSON.stringify(archive), "utf-8");
+
+		const child = buildInspectReply({ requestId: "r-legacy-child", asyncId: "run-replay-legacy", childId: "second" }, makeDeps(root, resultsDir));
+		assert.equal(child.error, undefined);
+		assert.equal(child.finalOutput, "second output");
+
+		const topLevel = buildInspectReply({ requestId: "r-legacy-top", asyncId: "run-replay-legacy" }, makeDeps(root, resultsDir));
+		assert.equal(topLevel.error, undefined);
+		assert.equal(topLevel.finalOutput, undefined);
+	});
 	it("reports an internal error when a durable replay archive is malformed", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-malformed-"));
 		const runId = "run-replay-malformed";

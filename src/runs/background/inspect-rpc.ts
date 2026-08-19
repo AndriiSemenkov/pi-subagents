@@ -240,19 +240,28 @@ function readSessionBackedOutput(sessionPath: string, trustedRoots: string[]): {
 	return lastAssistant ? { output: lastAssistant.text } : {};
 }
 
-function readResultOutput(resultsDir: string, sessionId: string, runId: string, stepIndex: number | undefined, trustedRoots: string[]): { output?: string; errorText?: string } {
+function readResultOutput(resultsDir: string, sessionId: string, runId: string, stepIndex: number | undefined, trustedRoots: string[], stepAgent?: string): { output?: string; errorText?: string } {
 	const resultPath = resultPayloadPathForSessionRun(resultsDir, sessionId, runId);
 	if (resultPath) return resultOutput(JSON.parse(fs.readFileSync(resultPath, "utf-8")) as unknown, stepIndex);
 	const replay = readCompletionReplay(resultsDir, runId, { sessionId });
 	const archive = replay ? readCompletionArchive(replay.archivePath) : undefined;
 	// Run-level inspection must not attribute a child's output to the run in a
-	// multi-child archive. Child entries always carry resultIndex; run-level
-	// entries never do. A single-child archive is the one exception: the run's
-	// output IS that child's output.
+	// multi-child archive. Current child entries carry resultIndex and agent;
+	// run-level entries carry neither. Legacy archives (written before
+	// resultIndex existed) have child entries with agent but no resultIndex,
+	// so child reads fall back to the agent name and run-level reads require
+	// agent-less entries. A single-child archive is the one exception: the
+	// run's output IS that child's output.
 	const childIndexes = new Set(archive?.entries.filter((entry) => entry.resultIndex !== undefined).map((entry) => entry.resultIndex));
 	const singleChild = childIndexes.size === 1;
-	const matches = (entry: { resultIndex?: number }): boolean =>
-		stepIndex !== undefined ? entry.resultIndex === stepIndex : entry.resultIndex === undefined || singleChild;
+	const matches = (entry: { resultIndex?: number; agent?: string }): boolean => {
+		if (stepIndex !== undefined) {
+			if (entry.resultIndex !== undefined) return entry.resultIndex === stepIndex;
+			return stepAgent !== undefined && entry.agent === stepAgent;
+		}
+		if (entry.resultIndex !== undefined) return singleChild;
+		return entry.agent === undefined;
+	};
 	const artifact = archive?.entries.find((entry) => entry.source === "output-artifact" && matches(entry));
 	const artifactPath = artifact?.source === "output-artifact" ? artifact.path : undefined;
 	if (artifactPath) return readOutputArtifact(artifactPath);
@@ -369,7 +378,7 @@ export function buildInspectReply(request: InspectRequest, deps: InspectDeps = {
 			}
 		}
 
-		const result = readResultOutput(resultsDir, currentSessionId, node.status.runId, node.stepIndex, trustedRoots);
+		const result = readResultOutput(resultsDir, currentSessionId, node.status.runId, node.stepIndex, trustedRoots, step?.agent);
 		const failedText = step?.error ?? node.status.error;
 		if (result.output === undefined && result.errorText === undefined && failedText !== undefined) {
 			return errorReply(request, "internal", "Inspection could not read the async run artifacts.");

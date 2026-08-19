@@ -15,6 +15,7 @@ import {
 	type InspectDeps,
 } from "../../src/runs/background/inspect-rpc.ts";
 import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
+import { writeCompletionReplay } from "../../src/runs/background/completion-replay.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
 const SESSION_ID = "session-current";
@@ -217,6 +218,31 @@ describe("inspect-rpc reply content", () => {
 		assert.equal(reply.status, "running");
 		assert.equal(reply.messages?.length, 2);
 		assert.equal(reply.finalOutput, undefined);
+	});
+	it("returns completed output from durable replay after the result payload is consumed", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-replay-"));
+		const { resultsDir } = makeRun(root, { runId: "run-replay" });
+		writeCompletionReplay({
+			resultsDir,
+			runId: "run-replay",
+			sessionId: SESSION_ID,
+			completion: { runId: "run-replay", results: [{ output: "finished output" }] },
+			data: { runId: "run-replay", sessionId: SESSION_ID, results: [{ output: "finished output" }] },
+			now: Date.now(),
+			ttlMs: 60_000,
+		});
+		const reply = buildInspectReply({ requestId: "r-replay", asyncId: "run-replay" }, makeDeps(root, resultsDir));
+		assert.equal(reply.error, undefined);
+		assert.equal(reply.finalOutput, "finished output");
+	});
+	it("reports an internal error when an indexed result payload is malformed", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-result-malformed-"));
+		const { resultsDir } = makeRun(root, { runId: "run-result-malformed", resultPayload: { summary: "valid" } });
+		fs.writeFileSync(path.join(resultsDir, "run-result-malformed.json"), "{ invalid", "utf-8");
+		const reply = buildInspectReply({ requestId: "r-result-malformed", asyncId: "run-result-malformed" }, makeDeps(root, resultsDir));
+		assert.equal(reply.error?.code, "internal");
+		assert.equal(reply.finalOutput, undefined);
+		assert.equal(JSON.stringify(reply).includes(root), false);
 	});
 });
 

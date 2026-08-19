@@ -3,6 +3,7 @@ import { sanitizeDisplayText, truncateDisplayText } from "../../shared/display-t
 import { DIRS, type AsyncStatus, type NestedRunSummary, type SubagentState } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { readSessionMessagesTail, type SessionTranscriptMessage } from "./fleet-view.ts";
+import { readCompletionReplay } from "./completion-replay.ts";
 import { resultPayloadPathForSessionRun } from "./result-files.ts";
 import { resolveSubagentRunId } from "./run-id-resolver.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
@@ -180,36 +181,37 @@ function findChildNode(status: AsyncStatus, asyncDir: string, childId: string): 
 	return { error: `Child '${childId}' was not found under async run '${status.runId}'.` };
 }
 
+function resultOutput(data: unknown, stepIndex: number | undefined): { output?: string; errorText?: string } {
+	if (!isRecord(data)) throw new Error("Async result payload must be an object.");
+	if (data.results !== undefined && !Array.isArray(data.results)) throw new Error("Async result payload results must be an array.");
+	if (data.summary !== undefined && typeof data.summary !== "string") throw new Error("Async result payload summary must be a string.");
+	const results = data.results;
+	if (stepIndex !== undefined && results) {
+		const stepResult = results[stepIndex];
+		if (stepResult === undefined) return {};
+		if (!isRecord(stepResult)) throw new Error("Async result payload step result must be an object.");
+		if (stepResult.output !== undefined && typeof stepResult.output !== "string") throw new Error("Async result payload step output must be a string.");
+		if (stepResult.error !== undefined && typeof stepResult.error !== "string") throw new Error("Async result payload step error must be a string.");
+		return {
+			...(typeof stepResult.output === "string" ? { output: stepResult.output } : {}),
+			...(typeof stepResult.error === "string" ? { errorText: stepResult.error } : {}),
+		};
+	}
+	if (typeof data.summary === "string") return { output: data.summary };
+	if (results?.length === 1) {
+		const result = results[0];
+		if (!isRecord(result)) throw new Error("Async result payload result must be an object.");
+		if (result.output !== undefined && typeof result.output !== "string") throw new Error("Async result payload output must be a string.");
+		if (typeof result.output === "string") return { output: result.output };
+	}
+	return {};
+}
+
 function readResultOutput(resultsDir: string, sessionId: string, runId: string, stepIndex: number | undefined): { output?: string; errorText?: string } {
 	const resultPath = resultPayloadPathForSessionRun(resultsDir, sessionId, runId);
-	if (!resultPath) return {};
-	let raw: string;
-	try {
-		raw = fs.readFileSync(resultPath, "utf-8");
-	} catch {
-		return {};
-	}
-	try {
-		const data = JSON.parse(raw) as unknown;
-		if (!isRecord(data)) return {};
-		if (stepIndex !== undefined && Array.isArray(data.results)) {
-			const stepResult = data.results[stepIndex];
-			if (isRecord(stepResult)) {
-				return {
-					...(typeof stepResult.output === "string" ? { output: stepResult.output } : {}),
-					...(typeof stepResult.error === "string" ? { errorText: stepResult.error } : {}),
-				};
-			}
-			return {};
-		}
-		if (typeof data.summary === "string") return { output: data.summary };
-		if (Array.isArray(data.results) && data.results.length === 1 && isRecord(data.results[0]) && typeof data.results[0].output === "string") {
-			return { output: data.results[0].output };
-		}
-		return {};
-	} catch {
-		return {};
-	}
+	if (resultPath) return resultOutput(JSON.parse(fs.readFileSync(resultPath, "utf-8")) as unknown, stepIndex);
+	const replay = readCompletionReplay(resultsDir, runId, { sessionId });
+	return replay ? resultOutput(replay.completion, stepIndex) : {};
 }
 
 function toReplyMessage(message: SessionTranscriptMessage): InspectReplyMessage {

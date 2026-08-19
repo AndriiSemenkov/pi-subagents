@@ -3,7 +3,7 @@ import { sanitizeDisplayText, truncateDisplayText } from "../../shared/display-t
 import { DIRS, type AsyncStatus, type NestedRunSummary, type SubagentState } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { readSessionMessagesTail, type SessionTranscriptMessage } from "./fleet-view.ts";
-import { readCompletionReplay } from "./completion-replay.ts";
+import { readCompletionArchive, readCompletionReplay } from "./completion-replay.ts";
 import { resultPayloadPathForSessionRun } from "./result-files.ts";
 import { resolveSubagentRunId } from "./run-id-resolver.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
@@ -211,7 +211,9 @@ function readResultOutput(resultsDir: string, sessionId: string, runId: string, 
 	const resultPath = resultPayloadPathForSessionRun(resultsDir, sessionId, runId);
 	if (resultPath) return resultOutput(JSON.parse(fs.readFileSync(resultPath, "utf-8")) as unknown, stepIndex);
 	const replay = readCompletionReplay(resultsDir, runId, { sessionId });
-	return replay ? resultOutput(replay.completion, stepIndex) : {};
+	const archive = replay ? readCompletionArchive(replay.archivePath) : undefined;
+	const output = archive?.entries.find((entry) => entry.source === "result-tail")?.text;
+	return output ? { output } : {};
 }
 
 function toReplyMessage(message: SessionTranscriptMessage): InspectReplyMessage {

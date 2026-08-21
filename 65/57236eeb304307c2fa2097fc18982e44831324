@@ -1,0 +1,19 @@
+docs/models.md
+  s_5139fb5e2d4b28::t_6c67c0d969a6ec 186-189,209
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "6557236eeb304307c2fa2097fc18982e44831324",
+  "prompts": {},
+  "sessions": {
+    "s_5139fb5e2d4b28": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a01ecd-0f9b-7c66-892a-670d15bfbacb",
+        "model": "kimi-k3"
+      },
+      "human_author": "Andrii Semenkov <andriis@ext.inditex.com>"
+    }
+  }
+}

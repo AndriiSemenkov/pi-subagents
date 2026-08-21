@@ -1,0 +1,55 @@
+CHANGELOG.md
+  s_244a7b58ee30fb::t_3b63fb56ad3239 5-7
+src/agents/agent-management.ts
+  s_244a7b58ee30fb::t_3d98db13159903 8,33,43,626-627,672-684,691-692,695-696,722,732-733
+src/agents/agents.ts
+  s_c02bd1951787e6::t_a74a927d91956f 18,20-25,178-188,275,929,936-942,995,1007-1038,1172,1207,1326,1337,1927,1933-1938,1954,1964,1973,1987,1999-2005,2008,2022,2031-2034,2046,2055,2071,2087,2129-2144
+src/extension/index.ts
+  s_7f5734767d55a1::t_fe8c21b5d4d14e 56,468-475,551,723,827-829,925,1000-1006
+src/profiles/profiles.ts
+  s_c02bd1951787e6::t_a35e48f217f845 5-6,122-169,486-487
+src/slash/slash-commands.ts
+  s_7f5734767d55a1::t_2f1aed41de8f56 24,111-114,116-118,641-645,675,685-686,760
+test/integration/slash-commands.test.ts
+  s_244a7b58ee30fb::t_9160b68d1221a6 224,257,641-707
+test/unit/agent-frontmatter.test.ts
+  s_244a7b58ee30fb::t_9cc9d093d8c503 522,543
+test/unit/agent-management.test.ts
+  s_244a7b58ee30fb::t_e0095797989872 809-847
+test/unit/agent-overrides.test.ts
+  s_c02bd1951787e6::t_cfb540422b9fc8 32-37,316-426
+test/unit/watchdog-lsp-diagnostics.test.ts
+  s_244a7b58ee30fb::t_c9909598a80acc 113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "3fb908cd14e2a36c3633857034399945eaf9145f",
+  "prompts": {},
+  "sessions": {
+    "s_244a7b58ee30fb": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a01a7c-2c89-72cc-8aa4-a51c05fe0ee4",
+        "model": "kimi-k3"
+      },
+      "human_author": "Andrii Semenkov <andriis@ext.inditex.com>"
+    },
+    "s_7f5734767d55a1": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a01a4d-aef4-7130-b4e7-b356cf170382",
+        "model": "kimi-k3"
+      },
+      "human_author": "Andrii Semenkov <andriis@ext.inditex.com>"
+    },
+    "s_c02bd1951787e6": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a01a57-b42e-7340-a1e6-8fbf8cac4d64",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Andrii Semenkov <andriis@ext.inditex.com>"
+    }
+  }
+}

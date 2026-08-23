@@ -1,0 +1,40 @@
+src/agents/agent-management.ts
+  h_14924c2b0c54d0 673,696-702,707-709,752-754
+src/agents/agents.ts
+  h_14924c2b0c54d0 181-183,268,270-275,1019,1032,1932,2006-2011,2033,2050,2156
+src/api/preflight.ts
+  h_14924c2b0c54d0 5,209-210,349-354
+src/extension/index.ts
+  h_14924c2b0c54d0 476-481,833,1005
+src/extension/public-execution.ts
+  h_14924c2b0c54d0 1-2,35-38
+src/runs/foreground/subagent-executor.ts
+  h_14924c2b0c54d0 3884,3887-3888,3988-3993,4261-4262,4289,4291,4330,4444-4445,4469,4471,4488,4542
+src/shared/host-owned-execution.ts
+  h_14924c2b0c54d0 1-16
+src/workflows/scripted-workflow.ts
+  h_14924c2b0c54d0 5,37,259-261,746
+test/integration/single-execution.test.ts
+  h_14924c2b0c54d0 549,557,745,751,756,760,762,829
+test/unit/agent-management.test.ts
+  h_14924c2b0c54d0 850-874
+test/unit/agent-overrides.test.ts
+  h_14924c2b0c54d0 358,382,386-389
+test/unit/preflight.test.ts
+  h_14924c2b0c54d0 204-247
+test/unit/public-execution.test.ts
+  h_14924c2b0c54d0 57,59-64,67-68,72
+test/unit/scripted-workflow.test.ts
+  h_14924c2b0c54d0 554-574
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "79bf60ae47aedb34354e85b18238111cbb2d041e",
+  "prompts": {},
+  "humans": {
+    "h_14924c2b0c54d0": {
+      "author": "Andrii Semenkov <andriis@ext.inditex.com>"
+    }
+  }
+}
